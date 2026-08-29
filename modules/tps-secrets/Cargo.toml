@@ -1,0 +1,9 @@
+[package]
+name = "jjs-module-tps-secrets"
+version = "0.1.0"
+edition = "2021"
+description = "Opaque host-owned secrets for JJS environments"
+license = "MIT"
+
+[dependencies]
+jjs-module-api.workspace = true

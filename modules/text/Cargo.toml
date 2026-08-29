@@ -1,0 +1,11 @@
+[package]
+name = "jjs-module-text"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+
+[dependencies]
+jjs-module-api.workspace = true
+
+[dev-dependencies]
+jjs.workspace = true

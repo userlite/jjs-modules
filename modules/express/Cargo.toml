@@ -1,0 +1,13 @@
+[package]
+name = "jjs-module-express"
+version = "0.1.0"
+edition = "2021"
+description = "Rust-native Express-compatible module for JJS"
+license = "MIT"
+
+[dependencies]
+jjs-module-api.workspace = true
+
+[dev-dependencies]
+jjs.workspace = true
+jjs-module-node-http = { path = "../node-http" }

@@ -1,0 +1,12 @@
+[package]
+name = "jjs-module-resvg"
+version = "0.1.0"
+edition = "2021"
+description = "Rust-native @resvg/resvg-js compatibility module for JJS"
+license = "MIT"
+
+[dependencies]
+jjs-module-api.workspace = true
+roxmltree = "0.20"
+resvg = "0.48.1"
+ttf-parser = "0.25"

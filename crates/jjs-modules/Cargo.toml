@@ -1,0 +1,24 @@
+[package]
+name = "jjs-modules"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Standard environment-owned compiled module profile for JJS"
+
+[dependencies]
+jjs-module-api.workspace = true
+jjs-module-crypto = { path = "../../modules/jjs-crypto" }
+jjs-module-express = { path = "../../modules/express" }
+jjs-module-hazelcast = { path = "../../modules/hazelcast" }
+jjs-module-json-schema = { path = "../../modules/json-schema" }
+jjs-module-node-http = { path = "../../modules/node-http" }
+jjs-module-rate-limit = { path = "../../modules/rate-limit" }
+jjs-module-resvg = { path = "../../modules/resvg" }
+jjs-module-schedule = { path = "../../modules/schedule" }
+jjs-module-service = { path = "../../modules/service" }
+jjs-module-text = { path = "../../modules/text" }
+jjs-module-tps-evidence = { path = "../../modules/tps-evidence" }
+jjs-module-tps-fetch = { path = "../../modules/tps-fetch" }
+jjs-module-tps-notify = { path = "../../modules/tps-notify" }
+jjs-module-tps-secrets = { path = "../../modules/tps-secrets" }
+

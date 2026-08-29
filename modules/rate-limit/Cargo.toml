@@ -1,0 +1,9 @@
+[package]
+name = "jjs-module-rate-limit"
+version = "0.1.0"
+edition = "2021"
+description = "Host-owned deterministic rate limiting for JJS"
+license = "MIT"
+
+[dependencies]
+jjs-module-api.workspace = true

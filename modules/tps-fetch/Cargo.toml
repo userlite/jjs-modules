@@ -1,0 +1,9 @@
+[package]
+name = "jjs-module-tps-fetch"
+version = "0.1.0"
+edition = "2021"
+description = "Bounded host-owned outbound HTTP for JJS environments"
+license = "MIT"
+
+[dependencies]
+jjs-module-api.workspace = true

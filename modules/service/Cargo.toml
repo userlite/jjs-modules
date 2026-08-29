@@ -1,0 +1,9 @@
+[package]
+name = "jjs-module-service"
+version = "0.1.0"
+edition = "2021"
+description = "Explicit host-owned service readiness transitions for JJS"
+license = "MIT"
+
+[dependencies]
+jjs-module-api.workspace = true

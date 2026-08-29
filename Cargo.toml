@@ -1,0 +1,29 @@
+[workspace]
+members = [
+    "crates/jjs-modules",
+    "modules/node-http",
+    "modules/express",
+    "modules/hazelcast",
+    "modules/rate-limit",
+    "modules/json-schema",
+    "modules/service",
+    "modules/text",
+    "modules/schedule",
+    "modules/tps-fetch",
+    "modules/tps-evidence",
+    "modules/tps-notify",
+    "modules/tps-secrets",
+    "modules/jjs-crypto",
+    "modules/resvg",
+]
+resolver = "2"
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+
+[workspace.dependencies]
+jjs = { git = "https://github.com/userlite/jjs.git", rev = "089d4e5b3913670e7b47dc32fe9a567f16097be3", default-features = false }
+jjs-module-api = { git = "https://github.com/userlite/jjs.git", rev = "089d4e5b3913670e7b47dc32fe9a567f16097be3" }
+

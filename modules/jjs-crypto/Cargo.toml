@@ -1,0 +1,9 @@
+[package]
+name = "jjs-module-crypto"
+version = "0.1.0"
+edition = "2021"
+description = "Host-recorded cryptographic operations for JJS environments"
+license = "MIT"
+
+[dependencies]
+jjs-module-api.workspace = true
