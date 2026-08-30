@@ -1,9 +1,9 @@
 //! Rust-native `node:http` module implemented only through `jjs-module-api`.
 
 use jjs_module_api::{
-    CompletionMode, HostCapabilityDescriptor, HostRequestSpec, ModuleCallResult, ModuleContext,
-    ModuleContinuation, ModuleError, ModuleFunctionKey, ModuleIdentity, ModuleManifest,
-    ModuleObjectKind, NativeModule, ValueHandle, MODULE_API_VERSION,
+    CompletionMode, HostCapabilityDescriptor, HostRequestSpec, MODULE_API_VERSION,
+    ModuleCallResult, ModuleContext, ModuleContinuation, ModuleError, ModuleFunctionKey,
+    ModuleIdentity, ModuleManifest, ModuleObjectKind, NativeModule, ValueHandle,
 };
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
@@ -598,7 +598,7 @@ impl NativeModule for NodeHttpModule {
                     return Ok(thrown("node_http_listen_arity_invalid"));
                 }
                 let port = match context.as_number(args[0]) {
-                    Ok(value) if value >= 1.0 && value <= 65535.0 && value.fract() == 0.0 => value,
+                    Ok(value) if value >= 0.0 && value <= 65535.0 && value.fract() == 0.0 => value,
                     _ => return Ok(thrown("node_http_listen_port_invalid")),
                 };
                 if args.len() == 2 && !context.is_callable(args[1]) {
@@ -615,7 +615,22 @@ impl NativeModule for NodeHttpModule {
                     arguments: vec![port_handle, receiver],
                 };
                 match context.request_host(request, ModuleContinuation(1), vec![receiver], false)? {
-                    ModuleCallResult::Return(_) => {
+                    ModuleCallResult::Return(assigned_port) => {
+                        let assigned_port = context.as_number(assigned_port).map_err(|_| {
+                            ModuleError::ContractViolation(
+                                "jjs:net/listen must return the assigned port".into(),
+                            )
+                        })?;
+                        if assigned_port < 1.0
+                            || assigned_port > 65535.0
+                            || assigned_port.fract() != 0.0
+                        {
+                            return Err(ModuleError::ContractViolation(
+                                "jjs:net/listen returned an invalid assigned port".into(),
+                            ));
+                        }
+                        let assigned_port = context.number(assigned_port)?;
+                        context.set_property(receiver, "port", assigned_port)?;
                         let listening = context.bool(true)?;
                         context.set_private(receiver, LISTENING, listening)?;
                         context.set_property(receiver, "listening", listening)?;
@@ -671,28 +686,30 @@ impl NativeModule for NodeHttpModule {
                     return Ok(thrown("node_http_response_headers_committed"));
                 }
                 let status = match context.as_number(args[0]) {
-                    Ok(value)
-                        if (100.0..=999.0).contains(&value) && value.fract() == 0.0 =>
-                    {
-                        value
-                    }
+                    Ok(value) if (100.0..=999.0).contains(&value) && value.fract() == 0.0 => value,
                     _ => return Ok(thrown("node_http_write_head_status_invalid")),
                 };
                 let headers = match args.len() {
                     1 => None,
                     2 if context.value_kind(args[1])?
-                        == jjs_module_api::ModuleValueKind::String => None,
+                        == jjs_module_api::ModuleValueKind::String =>
+                    {
+                        None
+                    }
                     2 => Some(args[1]),
                     3 if context.value_kind(args[1])?
-                        == jjs_module_api::ModuleValueKind::String => Some(args[2]),
+                        == jjs_module_api::ModuleValueKind::String =>
+                    {
+                        Some(args[2])
+                    }
                     _ => return Ok(thrown("node_http_write_head_status_message_invalid")),
                 };
                 let encoded_headers = context.get_private(receiver, HEADERS_JSON)?;
                 let encoded_headers = context.as_string(encoded_headers)?;
                 let mut encoded_headers: BTreeMap<String, String> =
                     serde_json::from_str(&encoded_headers).map_err(|_| {
-                    ModuleError::ContractViolation("node_http_response_headers_invalid".into())
-                })?;
+                        ModuleError::ContractViolation("node_http_response_headers_invalid".into())
+                    })?;
                 if let Some(headers) = headers {
                     let names = context.own_property_names(headers).map_err(|_| {
                         ModuleError::ContractViolation(
