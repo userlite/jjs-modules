@@ -21,6 +21,7 @@ const RESPONSE_END: ModuleFunctionKey = ModuleFunctionKey(5);
 const RESPONSE_FLUSH_HEADERS: ModuleFunctionKey = ModuleFunctionKey(6);
 const RESPONSE_WRITE: ModuleFunctionKey = ModuleFunctionKey(7);
 const RESPONSE_ON: ModuleFunctionKey = ModuleFunctionKey(8);
+const RESPONSE_WRITE_HEAD: ModuleFunctionKey = ModuleFunctionKey(9);
 const SERVER: ModuleObjectKind = ModuleObjectKind(1);
 const REQUEST: ModuleObjectKind = ModuleObjectKind(2);
 const RESPONSE: ModuleObjectKind = ModuleObjectKind(3);
@@ -372,6 +373,7 @@ impl Default for NodeHttpModule {
                     RESPONSE_FLUSH_HEADERS.0,
                     RESPONSE_WRITE.0,
                     RESPONSE_ON.0,
+                    RESPONSE_WRITE_HEAD.0,
                 ],
                 object_kind_keys: vec![SERVER.0, REQUEST.0, RESPONSE.0],
                 deterministic_resources: vec![],
@@ -661,6 +663,61 @@ impl NativeModule for NodeHttpModule {
                 context.set_private(receiver, HEADERS_JSON, raw)?;
                 Ok(ModuleCallResult::Return(receiver))
             }
+            RESPONSE_WRITE_HEAD => {
+                if args.is_empty() || args.len() > 3 {
+                    return Ok(thrown("node_http_write_head_arity_invalid"));
+                }
+                if response_lifecycle(context, receiver)? != "buffered" {
+                    return Ok(thrown("node_http_response_headers_committed"));
+                }
+                let status = match context.as_number(args[0]) {
+                    Ok(value)
+                        if (100.0..=999.0).contains(&value) && value.fract() == 0.0 =>
+                    {
+                        value
+                    }
+                    _ => return Ok(thrown("node_http_write_head_status_invalid")),
+                };
+                let headers = match args.len() {
+                    1 => None,
+                    2 if context.value_kind(args[1])?
+                        == jjs_module_api::ModuleValueKind::String => None,
+                    2 => Some(args[1]),
+                    3 if context.value_kind(args[1])?
+                        == jjs_module_api::ModuleValueKind::String => Some(args[2]),
+                    _ => return Ok(thrown("node_http_write_head_status_message_invalid")),
+                };
+                let encoded_headers = context.get_private(receiver, HEADERS_JSON)?;
+                let encoded_headers = context.as_string(encoded_headers)?;
+                let mut encoded_headers: BTreeMap<String, String> =
+                    serde_json::from_str(&encoded_headers).map_err(|_| {
+                    ModuleError::ContractViolation("node_http_response_headers_invalid".into())
+                })?;
+                if let Some(headers) = headers {
+                    let names = context.own_property_names(headers).map_err(|_| {
+                        ModuleError::ContractViolation(
+                            "node_http_write_head_headers_invalid".into(),
+                        )
+                    })?;
+                    for name in names {
+                        let value = context.get_property(headers, &name)?;
+                        let value = context.as_string(value).map_err(|_| {
+                            ModuleError::ContractViolation(
+                                "node_http_write_head_header_value_invalid".into(),
+                            )
+                        })?;
+                        encoded_headers.insert(name.to_ascii_lowercase(), value);
+                    }
+                }
+                let status = context.number(status)?;
+                context.set_property(receiver, "statusCode", status)?;
+                let encoded_headers = serde_json::to_string(&encoded_headers).map_err(|_| {
+                    ModuleError::ContractViolation("node_http_response_headers_invalid".into())
+                })?;
+                let encoded_headers = context.string(&encoded_headers)?;
+                context.set_private(receiver, HEADERS_JSON, encoded_headers)?;
+                Ok(ModuleCallResult::Return(receiver))
+            }
             RESPONSE_END => {
                 if args.len() > 1 {
                     return Ok(thrown("node_http_response_end_arity_invalid"));
@@ -845,8 +902,10 @@ impl NativeModule for NodeHttpModule {
         let status = context.number(200.0)?;
         context.set_property(response, "statusCode", status)?;
         let set_header = context.function(RESPONSE_SET_HEADER)?;
+        let write_head = context.function(RESPONSE_WRITE_HEAD)?;
         let end = context.function(RESPONSE_END)?;
         context.set_property(response, "setHeader", set_header)?;
+        context.set_property(response, "writeHead", write_head)?;
         context.set_property(response, "end", end)?;
         for (name, key) in [
             ("flushHeaders", RESPONSE_FLUSH_HEADERS),
