@@ -13,6 +13,7 @@ use jjs_module_rate_limit::RateLimitModule;
 use jjs_module_resvg::ResvgModule;
 use jjs_module_schedule::ScheduleModule;
 use jjs_module_service::ServiceModule;
+use jjs_module_sqlite3::Sqlite3Module;
 use jjs_module_text::TextModule;
 use jjs_module_tps_evidence::TpsEvidenceModule;
 use jjs_module_tps_fetch::TpsFetchModule;
@@ -35,6 +36,7 @@ pub fn tps_default_profile() -> Result<ModuleProfile, ModuleError> {
         Arc::new(JsonSchemaModule::default()),
         Arc::new(RateLimitModule::default()),
         Arc::new(ServiceModule::default()),
+        Arc::new(Sqlite3Module::default()),
         Arc::new(TextModule::default()),
         Arc::new(ScheduleModule::default()),
         Arc::new(TpsFetchModule::default()),
@@ -101,14 +103,13 @@ mod tests {
     fn default_profile_has_stable_identity_and_complete_catalog() {
         let profile = tps_default_profile().expect("standard profile");
         assert_eq!(profile.id, "tps-default-v1");
-        assert_eq!(profile.catalog.selections.len(), 14);
+        assert_eq!(profile.catalog.selections.len(), 15);
         let import_count: usize = profile
             .catalog
             .selections
             .iter()
             .map(|selection| selection.imports.len())
             .sum();
-        assert_eq!(import_count, 15);
+        assert_eq!(import_count, 16);
     }
 }
-

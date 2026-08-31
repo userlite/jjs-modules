@@ -398,6 +398,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "jjs-module-sqlite3"
+version = "0.1.0"
+dependencies = [
+ "jjs-module-api",
+ "serde_json",
+]
+
+[[package]]
 name = "jjs-module-text"
 version = "0.1.0"
 dependencies = [
@@ -449,6 +457,7 @@ dependencies = [
  "jjs-module-resvg",
  "jjs-module-schedule",
  "jjs-module-service",
+ "jjs-module-sqlite3",
  "jjs-module-text",
  "jjs-module-tps-evidence",
  "jjs-module-tps-fetch",

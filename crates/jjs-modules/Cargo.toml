@@ -16,9 +16,9 @@ jjs-module-rate-limit = { path = "../../modules/rate-limit" }
 jjs-module-resvg = { path = "../../modules/resvg" }
 jjs-module-schedule = { path = "../../modules/schedule" }
 jjs-module-service = { path = "../../modules/service" }
+jjs-module-sqlite3 = { path = "../../modules/sqlite3" }
 jjs-module-text = { path = "../../modules/text" }
 jjs-module-tps-evidence = { path = "../../modules/tps-evidence" }
 jjs-module-tps-fetch = { path = "../../modules/tps-fetch" }
 jjs-module-tps-notify = { path = "../../modules/tps-notify" }
 jjs-module-tps-secrets = { path = "../../modules/tps-secrets" }
-
