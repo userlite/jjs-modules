@@ -50,6 +50,7 @@ const STATEMENT_OBJECT: ModuleObjectKind = ModuleObjectKind(2);
 const HANDLE: u32 = 1;
 const DATABASE_OWNER: u32 = 2;
 const EXPORTS: u32 = 3;
+const UNSUPPORTED_FEATURE: u32 = 4;
 
 const OPEN_COMPLETE: u32 = 1;
 const RUN_COMPLETE: u32 = 2;
@@ -155,6 +156,10 @@ fn attach(
     key: ModuleFunctionKey,
 ) -> Result<(), ModuleError> {
     let function = context.function(key)?;
+    if matches!(key, DB_UNSUPPORTED | STMT_UNSUPPORTED) {
+        let feature = context.string(name)?;
+        context.set_private(function, UNSUPPORTED_FEATURE, feature)?;
+    }
     context.set_property(object, name, function)
 }
 
@@ -571,11 +576,8 @@ impl NativeModule for Sqlite3Module {
                 )
             }
             DB_UNSUPPORTED | STMT_UNSUPPORTED => {
-                let feature = context
-                    .own_property_names(receiver)?
-                    .into_iter()
-                    .find(|name| context.get_property(receiver, name).ok() == Some(callee))
-                    .unwrap_or_else(|| "requested feature".into());
+                let feature = context.get_private(callee, UNSUPPORTED_FEATURE)?;
+                let feature = context.as_string(feature)?;
                 unsupported(context, &format!("sqlite3.{feature}"))
             }
             _ => Err(ModuleError::ContractViolation(

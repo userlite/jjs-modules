@@ -45,6 +45,7 @@ const OWNER: u32 = 2;
 const CALLBACK: u32 = 3;
 const TX_MODE: u32 = 4;
 const PLUCK: u32 = 5;
+const UNSUPPORTED_FEATURE: u32 = 6;
 
 const OPEN_COMPLETE: u32 = 1;
 const EXEC_COMPLETE: u32 = 2;
@@ -140,6 +141,10 @@ fn attach(
     key: ModuleFunctionKey,
 ) -> Result<ValueHandle, ModuleError> {
     let function = context.function(key)?;
+    if matches!(key, DB_UNSUPPORTED | STMT_UNSUPPORTED) {
+        let feature = context.string(name)?;
+        context.set_private(function, UNSUPPORTED_FEATURE, feature)?;
+    }
     context.set_property(object, name, function)?;
     Ok(function)
 }
@@ -574,11 +579,8 @@ impl NativeModule for BetterSqlite3Module {
                 Ok(ModuleCallResult::Return(receiver))
             }
             DB_UNSUPPORTED | STMT_UNSUPPORTED => {
-                let feature = context
-                    .own_property_names(receiver)?
-                    .into_iter()
-                    .find(|name| context.get_property(receiver, name).ok() == Some(callee))
-                    .unwrap_or_else(|| "requested feature".into());
+                let feature = context.get_private(callee, UNSUPPORTED_FEATURE)?;
+                let feature = context.as_string(feature)?;
                 unsupported(context, &format!("better-sqlite3.{feature}"))
             }
             _ => Err(ModuleError::ContractViolation(
