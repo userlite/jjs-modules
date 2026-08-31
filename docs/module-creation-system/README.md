@@ -2,6 +2,8 @@
 
 These are working notes, not a finished specification. Update them after building modules so the rules come from real integration work.
 
+- [Error guidance](error-guidance.md) explains how failures give agents short, verified corrections without masking the error.
+
 ## Two module shapes
 
 ### Utility module
@@ -40,3 +42,6 @@ The first `fs` slice wraps existing session-VFS operations:
 - Callback, synchronous, and promise shapes
 
 Binary results require a real `Buffer` module. File descriptors, streams, watchers, recursive directory creation, append, copy, rename, and deletion require additional honest host contracts and remain explicit unsupported features until built.
+# Module creation system
+
+- [Error guidance](error-guidance.md): how runtime failures should give agents short, verified corrections without masking errors.
