@@ -2,6 +2,7 @@
 members = [
     "crates/jjs-modules",
     "modules/node-http",
+    "modules/node-fs",
     "modules/express",
     "modules/hazelcast",
     "modules/rate-limit",

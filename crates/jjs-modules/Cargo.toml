@@ -13,6 +13,7 @@ jjs-module-express = { path = "../../modules/express" }
 jjs-module-hazelcast = { path = "../../modules/hazelcast" }
 jjs-module-json-schema = { path = "../../modules/json-schema" }
 jjs-module-node-http = { path = "../../modules/node-http" }
+jjs-module-node-fs = { path = "../../modules/node-fs" }
 jjs-module-rate-limit = { path = "../../modules/rate-limit" }
 jjs-module-resvg = { path = "../../modules/resvg" }
 jjs-module-schedule = { path = "../../modules/schedule" }

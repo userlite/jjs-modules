@@ -365,6 +365,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "jjs-module-node-fs"
+version = "0.1.0"
+dependencies = [
+ "jjs-module-api",
+]
+
+[[package]]
 name = "jjs-module-node-http"
 version = "0.1.0"
 dependencies = [
@@ -461,6 +468,7 @@ dependencies = [
  "jjs-module-express",
  "jjs-module-hazelcast",
  "jjs-module-json-schema",
+ "jjs-module-node-fs",
  "jjs-module-node-http",
  "jjs-module-rate-limit",
  "jjs-module-resvg",
