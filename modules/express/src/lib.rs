@@ -1300,6 +1300,10 @@ impl NativeModule for ExpressModule {
                         "express.json middleware requires req, res, and next",
                     ));
                 }
+                let next = args[2];
+                if !context.is_callable(next) {
+                    return Ok(type_throw("express.json next must be callable"));
+                }
                 let request = args[0];
                 let headers = context.get_property(request, "headers")?;
                 if context.value_kind(headers)? != ModuleValueKind::Object {
@@ -1316,10 +1320,9 @@ impl NativeModule for ExpressModule {
                     .map(str::trim)
                     .unwrap_or_default();
                 if !media_type.eq_ignore_ascii_case("application/json") {
-                    return Ok(named_throw(
-                        "ExpressJsonContentTypeError",
-                        "express.json requires application/json content type",
-                    ));
+                    let receiver = context.undefined();
+                    context.call(next, receiver, &[])?;
+                    return Ok(return_undefined(context));
                 }
                 let raw = context.get_property(request, "body")?;
                 let raw = match context.as_string(raw) {
@@ -1365,10 +1368,6 @@ impl NativeModule for ExpressModule {
                     ));
                 }
                 context.set_property(request, "body", parsed)?;
-                let next = args[2];
-                if !context.is_callable(next) {
-                    return Ok(type_throw("express.json next must be callable"));
-                }
                 let receiver = context.undefined();
                 context.call(next, receiver, &[])?;
                 Ok(return_undefined(context))

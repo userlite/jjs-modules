@@ -60,7 +60,7 @@ impl ModuleHost for TestHost {
 }
 
 #[test]
-fn strict_json_parses_objects_arrays_and_distinct_failures() {
+fn strict_json_parses_json_and_skips_other_content_types() {
     let source = r#"
 const express = require('express');
 const middleware = express.json({ limit: 8, strict: true });
@@ -85,11 +85,16 @@ if (failure('', 'application/json', 'ExpressJsonEmptyBodyError')) score++;
 if (failure('{', 'application/json', 'ExpressJsonSyntaxError')) score++;
 if (failure('1', 'application/json', 'ExpressJsonStrictError')) score++;
 if (failure('{"é":10}', 'application/json', 'ExpressJsonLimitError')) score++;
-if (failure('{}', 'text/plain', 'ExpressJsonContentTypeError')) score++;
+let plain = request('{}', 'text/plain');
+middleware(plain, {}, function () { nextCalls++; });
+if (plain.body === '{}') score++;
+let missing = { body: '', headers: {} };
+middleware(missing, {}, function () { nextCalls++; });
+if (missing.body === '') score++;
 let optionsRejected = false;
 try { express.json({ limit: 8, strict: true, extra: true }); }
 catch (error) { optionsRejected = error.name === 'TypeError'; }
-if (nextCalls === 2) score++;
+if (nextCalls === 4) score++;
 if (optionsRejected) score++;
 score;
 "#;
@@ -110,7 +115,7 @@ score;
         matches!(
             result,
             RunResult::Halt {
-                output: Value::Number(9.0),
+                output: Value::Number(10.0),
                 ..
             }
         ),
