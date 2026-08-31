@@ -138,10 +138,11 @@ fn null(context: &mut dyn ModuleContext) -> Result<ValueHandle, ModuleError> {
 fn request(
     context: &mut dyn ModuleContext,
     operation: &str,
-    arguments: Vec<ValueHandle>,
+    mut arguments: Vec<ValueHandle>,
     continuation: u32,
     state: Vec<ValueHandle>,
 ) -> Result<ModuleCallResult, ModuleError> {
+    arguments.insert(0, context.string(operation)?);
     context.request_host(
         HostRequestSpec {
             capability: SQLITE_REQUEST.into(),
