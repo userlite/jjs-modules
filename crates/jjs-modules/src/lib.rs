@@ -118,6 +118,6 @@ mod tests {
             .iter()
             .map(|selection| selection.imports.len())
             .sum();
-        assert_eq!(import_count, 23);
+        assert_eq!(import_count, 25);
     }
 }

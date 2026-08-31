@@ -1,9 +1,9 @@
 //! Rust-native `node:http` module implemented only through `jjs-module-api`.
 
 use jjs_module_api::{
-    CompletionMode, HostCapabilityDescriptor, HostRequestSpec, MODULE_API_VERSION,
-    ModuleCallResult, ModuleContext, ModuleContinuation, ModuleError, ModuleFunctionKey,
-    ModuleIdentity, ModuleManifest, ModuleObjectKind, NativeModule, ValueHandle,
+    CompletionMode, HostCapabilityDescriptor, HostRequestSpec, ModuleCallResult, ModuleContext,
+    ModuleContinuation, ModuleError, ModuleFunctionKey, ModuleIdentity, ModuleManifest,
+    ModuleObjectKind, NativeModule, ValueHandle, MODULE_API_VERSION,
 };
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
@@ -348,7 +348,7 @@ impl Default for NodeHttpModule {
                 },
                 api_version: MODULE_API_VERSION,
                 state_version: 2,
-                imports: vec!["node:http".into()],
+                imports: vec!["http".into(), "node:http".into()],
                 capabilities: vec![
                     HostCapabilityDescriptor {
                         id: "jjs:net/listen".into(),

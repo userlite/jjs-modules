@@ -27,7 +27,7 @@ impl Default for JsonSchemaModule {
                 },
                 api_version: MODULE_API_VERSION,
                 state_version: 1,
-                imports: vec!["jjs-schema".into()],
+                imports: vec!["tps-schema".into()],
                 capabilities: vec![],
                 dependencies: vec![],
                 function_keys: (1..=6).collect(),
@@ -435,7 +435,7 @@ impl NativeModule for JsonSchemaModule {
                 Ok(ModuleCallResult::Return(schema))
             }
             _ => Err(ModuleError::ContractViolation(format!(
-                "unknown jjs-schema function key {}",
+                "unknown tps-schema function key {}",
                 key.0
             ))),
         }
@@ -449,7 +449,7 @@ impl NativeModule for JsonSchemaModule {
         _context: &mut dyn ModuleContext,
     ) -> Result<ModuleCallResult, ModuleError> {
         Err(ModuleError::ContractViolation(
-            "jjs-schema has no host continuations".into(),
+            "tps-schema has no host continuations".into(),
         ))
     }
 
@@ -461,7 +461,7 @@ impl NativeModule for JsonSchemaModule {
         _context: &mut dyn ModuleContext,
     ) -> Result<ModuleCallResult, ModuleError> {
         Err(ModuleError::ContractViolation(
-            "jjs-schema has no host events".into(),
+            "tps-schema has no host events".into(),
         ))
     }
 }

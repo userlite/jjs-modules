@@ -1,9 +1,9 @@
 //! Rust-native Hazelcast-shaped module implemented only through `jjs-module-api`.
 
 use jjs_module_api::{
-    CompletionMode, HostCapabilityDescriptor, HostRequestSpec, MODULE_API_VERSION,
-    ModuleCallResult, ModuleContext, ModuleContinuation, ModuleError, ModuleFunctionKey,
-    ModuleIdentity, ModuleManifest, ModuleObjectKind, NativeModule, ValueHandle,
+    CompletionMode, HostCapabilityDescriptor, HostRequestSpec, ModuleCallResult, ModuleContext,
+    ModuleContinuation, ModuleError, ModuleFunctionKey, ModuleIdentity, ModuleManifest,
+    ModuleObjectKind, NativeModule, ValueHandle, MODULE_API_VERSION,
 };
 
 const NEW_CLIENT: ModuleFunctionKey = ModuleFunctionKey(1);
@@ -141,7 +141,7 @@ impl Default for HazelcastModule {
                 },
                 api_version: MODULE_API_VERSION,
                 state_version: 3,
-                imports: vec!["hazelcast-client".into(), "jjs-sse".into()],
+                imports: vec!["hazelcast-client".into(), "tps-sse".into()],
                 capabilities,
                 dependencies: vec![],
                 function_keys: vec![
@@ -422,7 +422,7 @@ fn call_method(
     let method = context.get_property(object, name)?;
     if !context.is_callable(method) {
         return Err(ModuleError::ContractViolation(format!(
-            "jjs-sse requires callable {name}"
+            "tps-sse requires callable {name}"
         )));
     }
     context.call(method, object, args)
@@ -717,7 +717,7 @@ impl NativeModule for HazelcastModule {
                 if !args.is_empty() {
                     return Ok(thrown(
                         "TypeError",
-                        "jjs-sse browserSource accepts no arguments",
+                        "tps-sse browserSource accepts no arguments",
                     ));
                 }
                 Ok(ModuleCallResult::Return(context.string(
@@ -741,7 +741,7 @@ impl NativeModule for HazelcastModule {
                 {
                     return Ok(thrown(
                         "TypeError",
-                        "jjs-sse pipeMap requires one options object",
+                        "tps-sse pipeMap requires one options object",
                     ));
                 }
                 let mut names = context.own_property_names(args[0])?;
@@ -785,7 +785,7 @@ impl NativeModule for HazelcastModule {
                 if !valid_names {
                     return Ok(thrown(
                         "TypeError",
-                        "jjs-sse pipeMap options must match the exact contract",
+                        "tps-sse pipeMap options must match the exact contract",
                     ));
                 }
                 let source_name = if state_mode { "state" } else { "map" };
@@ -793,7 +793,7 @@ impl NativeModule for HazelcastModule {
                 let resource = match resource_name(context, source) {
                     Ok(value) => value,
                     Err(_) => {
-                        return Ok(thrown("TypeError", "jjs-sse map must be a Hazelcast map"));
+                        return Ok(thrown("TypeError", "tps-sse map must be a Hazelcast map"));
                     }
                 };
                 let request_value = context.get_property(args[0], "req")?;
@@ -811,7 +811,7 @@ impl NativeModule for HazelcastModule {
                 let on_close = if names.iter().any(|name| name == "onClose") {
                     let callback = context.get_property(args[0], "onClose")?;
                     if !context.is_callable(callback) {
-                        return Ok(thrown("TypeError", "jjs-sse onClose must be callable"));
+                        return Ok(thrown("TypeError", "tps-sse onClose must be callable"));
                     }
                     callback
                 } else {
@@ -828,7 +828,7 @@ impl NativeModule for HazelcastModule {
                 {
                     return Ok(thrown(
                         "TypeError",
-                        "jjs-sse limits must match the exact contract",
+                        "tps-sse limits must match the exact contract",
                     ));
                 }
                 let max_pending_events =
@@ -854,7 +854,7 @@ impl NativeModule for HazelcastModule {
                     return Ok(thrown(
                         "RangeError",
                         format!(
-                            "jjs-sse output limit must reserve at least {required_capacity} bytes"
+                            "tps-sse output limit must reserve at least {required_capacity} bytes"
                         ),
                     ));
                 }
@@ -864,7 +864,7 @@ impl NativeModule for HazelcastModule {
                 }
                 let reconnect = context.get_property(args[0], "reconnect")?;
                 if context.as_string(reconnect).ok().as_deref() != Some("reset") {
-                    return Ok(thrown("TypeError", "jjs-sse reconnect must be reset"));
+                    return Ok(thrown("TypeError", "tps-sse reconnect must be reset"));
                 }
 
                 let pipe = context.module_object(PIPE)?;
@@ -1842,7 +1842,7 @@ impl NativeModule for HazelcastModule {
     ) -> Result<ModuleCallResult, ModuleError> {
         if continuation.0 == PIPE_READ_COMPLETE {
             let pipe = state.first().copied().ok_or_else(|| {
-                ModuleError::ContractViolation("jjs-sse read pipe state is missing".into())
+                ModuleError::ContractViolation("tps-sse read pipe state is missing".into())
             })?;
             let value = match completion {
                 Ok(value) => value,
@@ -1899,7 +1899,7 @@ impl NativeModule for HazelcastModule {
         }
         if continuation.0 == PIPE_CLOSED_COMPLETE {
             let pipe = state.first().copied().ok_or_else(|| {
-                ModuleError::ContractViolation("jjs-sse close pipe state is missing".into())
+                ModuleError::ContractViolation("tps-sse close pipe state is missing".into())
             })?;
             let callback = context.get_private(pipe, PIPE_ON_CLOSE)?;
             let callback_result =
@@ -1917,7 +1917,7 @@ impl NativeModule for HazelcastModule {
         }
         if continuation.0 == PIPE_STATE_OPEN_COMPLETE {
             let pipe = state.first().copied().ok_or_else(|| {
-                ModuleError::ContractViolation("jjs-sse state pipe is missing".into())
+                ModuleError::ContractViolation("tps-sse state pipe is missing".into())
             })?;
             let value = match completion {
                 Ok(value) => value,
@@ -2002,12 +2002,10 @@ mod tests {
         let module = HazelcastModule::default();
         assert!(module.manifest.function_keys.contains(&MAP_SUBSCRIBE.0));
         assert!(module.manifest.function_keys.contains(&SUBSCRIPTION_READ.0));
-        assert!(
-            module
-                .manifest
-                .function_keys
-                .contains(&SUBSCRIPTION_CLOSE.0)
-        );
+        assert!(module
+            .manifest
+            .function_keys
+            .contains(&SUBSCRIPTION_CLOSE.0));
         assert!(module.manifest.object_kind_keys.contains(&SUBSCRIPTION.0));
         assert!(capability_ids().contains(&SUBSCRIPTION_OPEN));
         assert!(capability_ids().contains(&SUBSCRIPTION_READ_HOST));
@@ -2018,48 +2016,36 @@ mod tests {
         assert!(capability_ids().contains(&"jjs:state/map/putVersioned"));
         assert!(module.manifest.function_keys.contains(&GET_RINGBUFFER.0));
         assert!(module.manifest.function_keys.contains(&RINGBUFFER_ADD.0));
-        assert!(
-            module
-                .manifest
-                .function_keys
-                .contains(&SUBSCRIPTION_READ_SSE.0)
-        );
-        assert!(
-            module
-                .manifest
-                .function_keys
-                .contains(&SUBSCRIPTION_KEEPALIVE.0)
-        );
-        assert!(
-            module
-                .manifest
-                .function_keys
-                .contains(&RINGBUFFER_READ_AFTER.0)
-        );
+        assert!(module
+            .manifest
+            .function_keys
+            .contains(&SUBSCRIPTION_READ_SSE.0));
+        assert!(module
+            .manifest
+            .function_keys
+            .contains(&SUBSCRIPTION_KEEPALIVE.0));
+        assert!(module
+            .manifest
+            .function_keys
+            .contains(&RINGBUFFER_READ_AFTER.0));
         assert!(capability_ids().contains(&RINGBUFFER_OPEN));
         assert!(capability_ids().contains(&"jjs:state/ringbuffer/add"));
         assert!(capability_ids().contains(&"jjs:state/ringbuffer/readAfter"));
-        assert!(
-            module
-                .manifest
-                .function_keys
-                .contains(&GET_UNIQUE_THRESHOLD.0)
-        );
-        assert!(
-            module
-                .manifest
-                .object_kind_keys
-                .contains(&UNIQUE_THRESHOLD.0)
-        );
+        assert!(module
+            .manifest
+            .function_keys
+            .contains(&GET_UNIQUE_THRESHOLD.0));
+        assert!(module
+            .manifest
+            .object_kind_keys
+            .contains(&UNIQUE_THRESHOLD.0));
         assert!(capability_ids().contains(&UNIQUE_THRESHOLD_OPEN));
         assert!(capability_ids().contains(&UNIQUE_THRESHOLD_GET));
         assert!(capability_ids().contains(&UNIQUE_THRESHOLD_CONTRIBUTE_HOST));
-        assert!(
-            module
-                .manifest
-                .function_keys
-                .contains(&CLIENT_ATOMIC_BATCH.0)
-        );
+        assert!(module
+            .manifest
+            .function_keys
+            .contains(&CLIENT_ATOMIC_BATCH.0));
         assert!(capability_ids().contains(&ATOMIC_BATCH_HOST));
     }
 }

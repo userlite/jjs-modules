@@ -1,9 +1,9 @@
 //! Node `fs` compatibility surface backed exclusively by the host session VFS.
 
 use jjs_module_api::{
-    CompletionMode, HostCapabilityDescriptor, HostRequestSpec, MODULE_API_VERSION,
-    ModuleCallResult, ModuleContext, ModuleContinuation, ModuleError, ModuleFunctionKey,
-    ModuleIdentity, ModuleManifest, ModuleObjectKind, ModuleValueKind, NativeModule, ValueHandle,
+    CompletionMode, HostCapabilityDescriptor, HostRequestSpec, ModuleCallResult, ModuleContext,
+    ModuleContinuation, ModuleError, ModuleFunctionKey, ModuleIdentity, ModuleManifest,
+    ModuleObjectKind, ModuleValueKind, NativeModule, ValueHandle, MODULE_API_VERSION,
 };
 
 pub const FS_READ: &str = "jjs:fs/readFile";
@@ -11,11 +11,15 @@ pub const FS_WRITE: &str = "jjs:fs/writeFile";
 pub const FS_LIST: &str = "jjs:fs/list";
 pub const FS_STAT: &str = "jjs:fs/stat";
 pub const FS_MKDIR: &str = "jjs:fs/mkdir";
+pub const FS_RENAME: &str = "jjs:fs/rename";
+pub const FS_REMOVE: &str = "jjs:fs/remove";
 pub const FS_READ_SYNC: &str = "jjs:fs/readFileSync";
 pub const FS_WRITE_SYNC: &str = "jjs:fs/writeFileSync";
 pub const FS_LIST_SYNC: &str = "jjs:fs/listSync";
 pub const FS_STAT_SYNC: &str = "jjs:fs/statSync";
 pub const FS_MKDIR_SYNC: &str = "jjs:fs/mkdirSync";
+pub const FS_RENAME_SYNC: &str = "jjs:fs/renameSync";
+pub const FS_REMOVE_SYNC: &str = "jjs:fs/removeSync";
 
 const READ_SYNC: ModuleFunctionKey = ModuleFunctionKey(1);
 const WRITE_SYNC: ModuleFunctionKey = ModuleFunctionKey(2);
@@ -24,6 +28,8 @@ const STAT_SYNC: ModuleFunctionKey = ModuleFunctionKey(4);
 const MKDIR_SYNC: ModuleFunctionKey = ModuleFunctionKey(5);
 const EXISTS_SYNC: ModuleFunctionKey = ModuleFunctionKey(6);
 const ACCESS_SYNC: ModuleFunctionKey = ModuleFunctionKey(7);
+const RENAME_SYNC: ModuleFunctionKey = ModuleFunctionKey(8);
+const UNLINK_SYNC: ModuleFunctionKey = ModuleFunctionKey(9);
 
 const READ_CALLBACK: ModuleFunctionKey = ModuleFunctionKey(11);
 const WRITE_CALLBACK: ModuleFunctionKey = ModuleFunctionKey(12);
@@ -32,6 +38,8 @@ const STAT_CALLBACK: ModuleFunctionKey = ModuleFunctionKey(14);
 const MKDIR_CALLBACK: ModuleFunctionKey = ModuleFunctionKey(15);
 const EXISTS_CALLBACK: ModuleFunctionKey = ModuleFunctionKey(16);
 const ACCESS_CALLBACK: ModuleFunctionKey = ModuleFunctionKey(17);
+const RENAME_CALLBACK: ModuleFunctionKey = ModuleFunctionKey(18);
+const UNLINK_CALLBACK: ModuleFunctionKey = ModuleFunctionKey(19);
 
 const READ_PROMISE: ModuleFunctionKey = ModuleFunctionKey(21);
 const WRITE_PROMISE: ModuleFunctionKey = ModuleFunctionKey(22);
@@ -39,6 +47,8 @@ const READDIR_PROMISE: ModuleFunctionKey = ModuleFunctionKey(23);
 const STAT_PROMISE: ModuleFunctionKey = ModuleFunctionKey(24);
 const MKDIR_PROMISE: ModuleFunctionKey = ModuleFunctionKey(25);
 const ACCESS_PROMISE: ModuleFunctionKey = ModuleFunctionKey(27);
+const RENAME_PROMISE: ModuleFunctionKey = ModuleFunctionKey(28);
+const UNLINK_PROMISE: ModuleFunctionKey = ModuleFunctionKey(29);
 
 const UNSUPPORTED: ModuleFunctionKey = ModuleFunctionKey(30);
 const STAT_IS_FILE: ModuleFunctionKey = ModuleFunctionKey(40);
@@ -54,6 +64,8 @@ const COMPLETE_STAT_SYNC: u32 = 4;
 const COMPLETE_MKDIR_SYNC: u32 = 5;
 const COMPLETE_EXISTS_SYNC: u32 = 6;
 const COMPLETE_ACCESS_SYNC: u32 = 7;
+const COMPLETE_RENAME_SYNC: u32 = 8;
+const COMPLETE_UNLINK_SYNC: u32 = 9;
 const COMPLETE_READ_CALLBACK: u32 = 11;
 const COMPLETE_WRITE_CALLBACK: u32 = 12;
 const COMPLETE_READDIR_CALLBACK: u32 = 13;
@@ -61,12 +73,16 @@ const COMPLETE_STAT_CALLBACK: u32 = 14;
 const COMPLETE_MKDIR_CALLBACK: u32 = 15;
 const COMPLETE_EXISTS_CALLBACK: u32 = 16;
 const COMPLETE_ACCESS_CALLBACK: u32 = 17;
+const COMPLETE_RENAME_CALLBACK: u32 = 18;
+const COMPLETE_UNLINK_CALLBACK: u32 = 19;
 const COMPLETE_READ_PROMISE: u32 = 21;
 const COMPLETE_WRITE_PROMISE: u32 = 22;
 const COMPLETE_READDIR_PROMISE: u32 = 23;
 const COMPLETE_STAT_PROMISE: u32 = 24;
 const COMPLETE_MKDIR_PROMISE: u32 = 25;
 const COMPLETE_ACCESS_PROMISE: u32 = 27;
+const COMPLETE_RENAME_PROMISE: u32 = 28;
+const COMPLETE_UNLINK_PROMISE: u32 = 29;
 
 fn capabilities() -> Vec<HostCapabilityDescriptor> {
     [
@@ -75,11 +91,15 @@ fn capabilities() -> Vec<HostCapabilityDescriptor> {
         (FS_LIST, CompletionMode::Yield),
         (FS_STAT, CompletionMode::Yield),
         (FS_MKDIR, CompletionMode::Yield),
+        (FS_RENAME, CompletionMode::Yield),
+        (FS_REMOVE, CompletionMode::Yield),
         (FS_READ_SYNC, CompletionMode::Sync),
         (FS_WRITE_SYNC, CompletionMode::Sync),
         (FS_LIST_SYNC, CompletionMode::Sync),
         (FS_STAT_SYNC, CompletionMode::Sync),
         (FS_MKDIR_SYNC, CompletionMode::Sync),
+        (FS_RENAME_SYNC, CompletionMode::Sync),
+        (FS_REMOVE_SYNC, CompletionMode::Sync),
     ]
     .into_iter()
     .map(|(id, completion)| {
@@ -107,6 +127,8 @@ fn fs_function_keys() -> Vec<u32> {
         MKDIR_SYNC.0,
         EXISTS_SYNC.0,
         ACCESS_SYNC.0,
+        RENAME_SYNC.0,
+        UNLINK_SYNC.0,
         READ_CALLBACK.0,
         WRITE_CALLBACK.0,
         READDIR_CALLBACK.0,
@@ -114,12 +136,16 @@ fn fs_function_keys() -> Vec<u32> {
         MKDIR_CALLBACK.0,
         EXISTS_CALLBACK.0,
         ACCESS_CALLBACK.0,
+        RENAME_CALLBACK.0,
+        UNLINK_CALLBACK.0,
         READ_PROMISE.0,
         WRITE_PROMISE.0,
         READDIR_PROMISE.0,
         STAT_PROMISE.0,
         MKDIR_PROMISE.0,
         ACCESS_PROMISE.0,
+        RENAME_PROMISE.0,
+        UNLINK_PROMISE.0,
         UNSUPPORTED.0,
         STAT_IS_FILE.0,
         STAT_IS_DIRECTORY.0,
@@ -134,6 +160,8 @@ fn promises_function_keys() -> Vec<u32> {
         STAT_PROMISE.0,
         MKDIR_PROMISE.0,
         ACCESS_PROMISE.0,
+        RENAME_PROMISE.0,
+        UNLINK_PROMISE.0,
         UNSUPPORTED.0,
         STAT_IS_FILE.0,
         STAT_IS_DIRECTORY.0,
@@ -154,7 +182,7 @@ impl Default for NodeFsModule {
                     implementation: "jjs-module-node-fs-v1".into(),
                 },
                 api_version: MODULE_API_VERSION,
-                state_version: 1,
+                state_version: 2,
                 imports: vec!["fs".into(), "node:fs".into()],
                 capabilities: capabilities(),
                 dependencies: vec![],
@@ -180,7 +208,7 @@ impl Default for NodeFsPromisesModule {
                     implementation: "jjs-module-node-fs-promises-v1".into(),
                 },
                 api_version: MODULE_API_VERSION,
-                state_version: 1,
+                state_version: 2,
                 imports: vec!["fs/promises".into(), "node:fs/promises".into()],
                 capabilities: capabilities(),
                 dependencies: vec![],
@@ -234,6 +262,8 @@ fn promise_exports(context: &mut dyn ModuleContext) -> Result<ValueHandle, Modul
         ("stat", STAT_PROMISE),
         ("mkdir", MKDIR_PROMISE),
         ("access", ACCESS_PROMISE),
+        ("rename", RENAME_PROMISE),
+        ("unlink", UNLINK_PROMISE),
     ] {
         attach(context, exports, name, key)?;
     }
@@ -243,11 +273,9 @@ fn promise_exports(context: &mut dyn ModuleContext) -> Result<ValueHandle, Modul
         "cp",
         "open",
         "opendir",
-        "rename",
         "rm",
         "rmdir",
         "truncate",
-        "unlink",
         "watch",
     ] {
         attach_unsupported(context, exports, name)?;
@@ -265,6 +293,8 @@ fn fs_exports(context: &mut dyn ModuleContext) -> Result<ValueHandle, ModuleErro
         ("mkdirSync", MKDIR_SYNC),
         ("existsSync", EXISTS_SYNC),
         ("accessSync", ACCESS_SYNC),
+        ("renameSync", RENAME_SYNC),
+        ("unlinkSync", UNLINK_SYNC),
         ("readFile", READ_CALLBACK),
         ("writeFile", WRITE_CALLBACK),
         ("readdir", READDIR_CALLBACK),
@@ -272,6 +302,8 @@ fn fs_exports(context: &mut dyn ModuleContext) -> Result<ValueHandle, ModuleErro
         ("mkdir", MKDIR_CALLBACK),
         ("exists", EXISTS_CALLBACK),
         ("access", ACCESS_CALLBACK),
+        ("rename", RENAME_CALLBACK),
+        ("unlink", UNLINK_CALLBACK),
     ] {
         attach(context, exports, name, key)?;
     }
@@ -288,16 +320,12 @@ fn fs_exports(context: &mut dyn ModuleContext) -> Result<ValueHandle, ModuleErro
         "openSync",
         "opendir",
         "opendirSync",
-        "rename",
-        "renameSync",
         "rm",
         "rmSync",
         "rmdir",
         "rmdirSync",
         "truncate",
         "truncateSync",
-        "unlink",
-        "unlinkSync",
         "watch",
         "watchFile",
     ] {
@@ -326,12 +354,12 @@ fn unsupported_feature(
     qualified: &str,
 ) -> Result<ModuleCallResult, ModuleError> {
     let error = context.object()?;
-    let name = context.string("JjsUnsupportedFeatureError")?;
-    let code = context.string("JJS_UNSUPPORTED_FEATURE")?;
+    let name = context.string("UnsupportedFeatureError")?;
+    let code = context.string("ERR_FEATURE_UNAVAILABLE")?;
     let retryable = context.bool(false)?;
     let feature_value = context.string(&qualified)?;
     let message = context.string(&format!(
-        "JJS_UNSUPPORTED_FEATURE: {qualified} is not supported by this JJS runtime. Retrying will not succeed."
+        "ERR_FEATURE_UNAVAILABLE: {qualified} is not supported by this runtime. Retrying will not succeed."
     ))?;
     context.set_property(error, "name", name)?;
     context.set_property(error, "code", code)?;
@@ -424,7 +452,13 @@ fn sync_request(
     })?;
     let ok = context.get_property(envelope, "ok")?;
     let completion = if context.as_bool(ok)? {
-        if matches!(continuation, COMPLETE_WRITE_SYNC | COMPLETE_MKDIR_SYNC) {
+        if matches!(
+            continuation,
+            COMPLETE_WRITE_SYNC
+                | COMPLETE_MKDIR_SYNC
+                | COMPLETE_RENAME_SYNC
+                | COMPLETE_UNLINK_SYNC
+        ) {
             Ok(context.undefined())
         } else {
             Ok(context.get_property(envelope, "value")?)
@@ -740,6 +774,76 @@ fn call_api(
                 request(context, FS_STAT, vec![path], continuation, state, promise)
             }
         }
+        RENAME_SYNC | RENAME_PROMISE | RENAME_CALLBACK => {
+            let Some(destination) = args.get(1).copied() else {
+                return Ok(thrown("fs.rename requires source and destination paths"));
+            };
+            if context.value_kind(destination)? != ModuleValueKind::String {
+                return Ok(thrown("fs rename destination must be a string"));
+            }
+            if key == RENAME_CALLBACK {
+                let Some(callback) = callback_argument(context, args) else {
+                    return Ok(thrown("fs.rename requires a callback"));
+                };
+                request(
+                    context,
+                    FS_RENAME,
+                    vec![path, destination],
+                    COMPLETE_RENAME_CALLBACK,
+                    vec![callback, path],
+                    false,
+                )
+            } else if key == RENAME_SYNC {
+                sync_request(
+                    context,
+                    FS_RENAME_SYNC,
+                    vec![path, destination],
+                    COMPLETE_RENAME_SYNC,
+                    path_state,
+                )
+            } else {
+                request(
+                    context,
+                    FS_RENAME,
+                    vec![path, destination],
+                    COMPLETE_RENAME_PROMISE,
+                    path_state,
+                    true,
+                )
+            }
+        }
+        UNLINK_SYNC | UNLINK_PROMISE | UNLINK_CALLBACK => {
+            if key == UNLINK_CALLBACK {
+                let Some(callback) = callback_argument(context, args) else {
+                    return Ok(thrown("fs.unlink requires a callback"));
+                };
+                request(
+                    context,
+                    FS_REMOVE,
+                    vec![path],
+                    COMPLETE_UNLINK_CALLBACK,
+                    vec![callback, path],
+                    false,
+                )
+            } else if key == UNLINK_SYNC {
+                sync_request(
+                    context,
+                    FS_REMOVE_SYNC,
+                    vec![path],
+                    COMPLETE_UNLINK_SYNC,
+                    path_state,
+                )
+            } else {
+                request(
+                    context,
+                    FS_REMOVE,
+                    vec![path],
+                    COMPLETE_UNLINK_PROMISE,
+                    path_state,
+                    true,
+                )
+            }
+        }
         _ => Err(ModuleError::ContractViolation(
             "unknown node fs function key".into(),
         )),
@@ -786,6 +890,8 @@ fn operation_for(continuation: u32) -> &'static str {
         COMPLETE_MKDIR_SYNC | COMPLETE_MKDIR_CALLBACK | COMPLETE_MKDIR_PROMISE => "mkdir",
         COMPLETE_EXISTS_SYNC | COMPLETE_EXISTS_CALLBACK => "exists",
         COMPLETE_ACCESS_SYNC | COMPLETE_ACCESS_CALLBACK | COMPLETE_ACCESS_PROMISE => "access",
+        COMPLETE_RENAME_SYNC | COMPLETE_RENAME_CALLBACK | COMPLETE_RENAME_PROMISE => "rename",
+        COMPLETE_UNLINK_SYNC | COMPLETE_UNLINK_CALLBACK | COMPLETE_UNLINK_PROMISE => "unlink",
         _ => "fs",
     }
 }
@@ -797,7 +903,7 @@ fn resume_api(
     context: &mut dyn ModuleContext,
 ) -> Result<ModuleCallResult, ModuleError> {
     let id = continuation.0;
-    let callback_style = (COMPLETE_READ_CALLBACK..=COMPLETE_ACCESS_CALLBACK).contains(&id);
+    let callback_style = (COMPLETE_READ_CALLBACK..=COMPLETE_UNLINK_CALLBACK).contains(&id);
     let exists_style = matches!(id, COMPLETE_EXISTS_SYNC | COMPLETE_EXISTS_CALLBACK);
     let path_index = usize::from(callback_style);
     let path = *state.get(path_index).ok_or_else(|| {
@@ -810,7 +916,15 @@ fn resume_api(
                 context.bool(true)?
             } else if matches!(
                 id,
-                COMPLETE_ACCESS_SYNC | COMPLETE_ACCESS_CALLBACK | COMPLETE_ACCESS_PROMISE
+                COMPLETE_ACCESS_SYNC
+                    | COMPLETE_ACCESS_CALLBACK
+                    | COMPLETE_ACCESS_PROMISE
+                    | COMPLETE_RENAME_SYNC
+                    | COMPLETE_RENAME_CALLBACK
+                    | COMPLETE_RENAME_PROMISE
+                    | COMPLETE_UNLINK_SYNC
+                    | COMPLETE_UNLINK_CALLBACK
+                    | COMPLETE_UNLINK_PROMISE
             ) {
                 context.undefined()
             } else if matches!(
@@ -844,7 +958,11 @@ fn resume_api(
             let none = null(context)?;
             if matches!(
                 id,
-                COMPLETE_WRITE_CALLBACK | COMPLETE_MKDIR_CALLBACK | COMPLETE_ACCESS_CALLBACK
+                COMPLETE_WRITE_CALLBACK
+                    | COMPLETE_MKDIR_CALLBACK
+                    | COMPLETE_ACCESS_CALLBACK
+                    | COMPLETE_RENAME_CALLBACK
+                    | COMPLETE_UNLINK_CALLBACK
             ) {
                 context.call(callback, undefined, &[none])?;
             } else {

@@ -28,7 +28,7 @@ impl Default for TextModule {
                 },
                 api_version: MODULE_API_VERSION,
                 state_version: 1,
-                imports: vec!["jjs-text".into()],
+                imports: vec!["tps-text".into()],
                 capabilities: vec![],
                 dependencies: vec![],
                 function_keys: vec![
@@ -106,11 +106,11 @@ impl NativeModule for TextModule {
         match key {
             NORMALIZE | WORDS => {
                 if args.len() != 1 {
-                    return Ok(thrown("jjs-text helper requires exactly one string"));
+                    return Ok(thrown("tps-text helper requires exactly one string"));
                 }
                 let text = match context.as_string(args[0]) {
                     Ok(text) => text,
-                    Err(_) => return Ok(thrown("jjs-text helper requires a string")),
+                    Err(_) => return Ok(thrown("tps-text helper requires a string")),
                 };
                 let words = normalized_words(context, &text)?;
                 if key == NORMALIZE {
@@ -125,15 +125,15 @@ impl NativeModule for TextModule {
             }
             SHARED_WORDS => {
                 if args.len() != 2 {
-                    return Ok(thrown("jjs-text sharedWords requires exactly two strings"));
+                    return Ok(thrown("tps-text sharedWords requires exactly two strings"));
                 }
                 let left = match context.as_string(args[0]) {
                     Ok(value) => value,
-                    Err(_) => return Ok(thrown("jjs-text sharedWords requires strings")),
+                    Err(_) => return Ok(thrown("tps-text sharedWords requires strings")),
                 };
                 let right = match context.as_string(args[1]) {
                     Ok(value) => value,
-                    Err(_) => return Ok(thrown("jjs-text sharedWords requires strings")),
+                    Err(_) => return Ok(thrown("tps-text sharedWords requires strings")),
                 };
                 let left = normalized_words(context, &left)?
                     .into_iter()
@@ -150,11 +150,11 @@ impl NativeModule for TextModule {
             }
             UTF8_ENCODE => {
                 if args.len() != 1 {
-                    return Ok(thrown("jjs-text utf8Encode requires exactly one string"));
+                    return Ok(thrown("tps-text utf8Encode requires exactly one string"));
                 }
                 let text = match context.as_string(args[0]) {
                     Ok(value) => value,
-                    Err(_) => return Ok(thrown("jjs-text utf8Encode requires a string")),
+                    Err(_) => return Ok(thrown("tps-text utf8Encode requires a string")),
                 };
                 context.charge_fuel(text.len().saturating_add(1) as u64)?;
                 let result = context.array()?;
@@ -167,12 +167,12 @@ impl NativeModule for TextModule {
             UTF8_DECODE => {
                 if args.len() != 1 {
                     return Ok(thrown(
-                        "jjs-text utf8Decode requires exactly one byte array",
+                        "tps-text utf8Decode requires exactly one byte array",
                     ));
                 }
                 let length = match context.array_len(args[0]) {
                     Ok(value) => value,
-                    Err(_) => return Ok(thrown("jjs-text utf8Decode requires a byte array")),
+                    Err(_) => return Ok(thrown("tps-text utf8Decode requires a byte array")),
                 };
                 context.charge_fuel(length.saturating_add(1) as u64)?;
                 let mut bytes = Vec::with_capacity(length);
@@ -188,7 +188,7 @@ impl NativeModule for TextModule {
                         }
                         _ => {
                             return Ok(thrown(
-                                "jjs-text utf8Decode accepts only integer bytes 0..255",
+                                "tps-text utf8Decode accepts only integer bytes 0..255",
                             ));
                         }
                     };
@@ -196,12 +196,12 @@ impl NativeModule for TextModule {
                 }
                 let decoded = match String::from_utf8(bytes) {
                     Ok(value) => value,
-                    Err(_) => return Ok(thrown("jjs-text utf8Decode requires valid UTF-8")),
+                    Err(_) => return Ok(thrown("tps-text utf8Decode requires valid UTF-8")),
                 };
                 Ok(ModuleCallResult::Return(context.string(&decoded)?))
             }
             _ => Err(ModuleError::ContractViolation(
-                "unknown jjs-text function key".into(),
+                "unknown tps-text function key".into(),
             )),
         }
     }
@@ -214,7 +214,7 @@ impl NativeModule for TextModule {
         _context: &mut dyn ModuleContext,
     ) -> Result<ModuleCallResult, ModuleError> {
         Err(ModuleError::ContractViolation(
-            "jjs-text never yields".into(),
+            "tps-text never yields".into(),
         ))
     }
 
@@ -226,7 +226,7 @@ impl NativeModule for TextModule {
         _context: &mut dyn ModuleContext,
     ) -> Result<ModuleCallResult, ModuleError> {
         Err(ModuleError::ContractViolation(
-            "jjs-text has no events".into(),
+            "tps-text has no events".into(),
         ))
     }
 }
@@ -238,7 +238,7 @@ mod tests {
     #[test]
     fn declares_pure_deterministic_contract() {
         let module = TextModule::default();
-        assert_eq!(module.manifest.imports, ["jjs-text"]);
+        assert_eq!(module.manifest.imports, ["tps-text"]);
         assert!(module.manifest.capabilities.is_empty());
         assert_eq!(module.manifest.function_keys, [1, 2, 3, 4, 5]);
     }

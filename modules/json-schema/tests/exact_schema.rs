@@ -25,7 +25,7 @@ impl ModuleHost for TestHost {
                     version: "0.1.0".into(),
                     implementation: "jjs-module-json-schema-v1".into(),
                 },
-                imports: vec!["jjs-schema".into()],
+                    imports: vec!["tps-schema".into()],
             }],
         }
     }
@@ -38,7 +38,7 @@ impl ModuleHost for TestHost {
 #[test]
 fn exact_objects_reject_missing_unknown_and_wrong_types_without_coercion() {
     let source = r#"
-const schema = require('jjs-schema');
+const schema = require('tps-schema');
 const question = {
   text: schema.string({ minLength: 1, maxLength: 160 }),
   votes: schema.safeInteger({ minimum: 0, maximum: 1000 }),

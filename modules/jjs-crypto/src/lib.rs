@@ -9,7 +9,10 @@ use jjs_module_api::{
 const RANDOM_BYTES: ModuleFunctionKey = ModuleFunctionKey(1);
 const SHA256: ModuleFunctionKey = ModuleFunctionKey(2);
 const HMAC_SHA256: ModuleFunctionKey = ModuleFunctionKey(3);
+const BYTES_TO_STRING: ModuleFunctionKey = ModuleFunctionKey(4);
 const RETURN_COMPLETION: u32 = 1;
+const RETURN_RANDOM_BYTES: u32 = 2;
+const RANDOM_COUNTER: u32 = 1;
 
 pub const CRYPTO_RANDOM_BYTES: &str = "jjs:crypto/randomBytes";
 pub const CRYPTO_SHA256: &str = "jjs:crypto/sha256";
@@ -46,11 +49,16 @@ impl Default for CryptoModule {
                     implementation: "jjs-module-crypto-v1".into(),
                 },
                 api_version: MODULE_API_VERSION,
-                state_version: 1,
-                imports: vec!["jjs-crypto".into()],
+                state_version: 2,
+                imports: vec!["crypto".into(), "node:crypto".into()],
                 capabilities,
                 dependencies: vec![],
-                function_keys: vec![RANDOM_BYTES.0, SHA256.0, HMAC_SHA256.0],
+                function_keys: vec![
+                    RANDOM_BYTES.0,
+                    SHA256.0,
+                    HMAC_SHA256.0,
+                    BYTES_TO_STRING.0,
+                ],
                 object_kind_keys: vec![],
                 deterministic_resources: vec![],
             },
@@ -81,6 +89,10 @@ impl NativeModule for CryptoModule {
             ("hmacSha256", HMAC_SHA256),
         ] {
             let function = context.function(key)?;
+            if key == RANDOM_BYTES {
+                let counter = context.number(0.0)?;
+                context.set_private(function, RANDOM_COUNTER, counter)?;
+            }
             context.set_property(exports, name, function)?;
         }
         Ok(ModuleCallResult::Return(exports))
@@ -89,31 +101,82 @@ impl NativeModule for CryptoModule {
     fn call(
         &self,
         key: ModuleFunctionKey,
-        _callee: ValueHandle,
-        _receiver: ValueHandle,
+        callee: ValueHandle,
+        receiver: ValueHandle,
         args: &[ValueHandle],
         context: &mut dyn ModuleContext,
     ) -> Result<ModuleCallResult, ModuleError> {
+        if key == BYTES_TO_STRING {
+            if args.len() > 1 {
+                return Ok(thrown("Buffer.toString accepts at most one encoding"));
+            }
+            if let Some(encoding) = args.first().copied() {
+                if context.value_kind(encoding)? != ModuleValueKind::String
+                    || context.as_string(encoding)?.to_ascii_lowercase() != "hex"
+                {
+                    return Ok(thrown("only Buffer.toString('hex') is currently supported"));
+                }
+            }
+            let mut encoded = String::with_capacity(context.array_len(receiver)? * 2);
+            for index in 0..context.array_len(receiver)? {
+                let value = context.array_get(receiver, index)?;
+                let byte = context.as_number(value)?;
+                if !byte.is_finite() || byte.fract() != 0.0 || !(0.0..=255.0).contains(&byte) {
+                    return Err(ModuleError::ContractViolation(
+                        "crypto byte result contained an invalid byte".into(),
+                    ));
+                }
+                encoded.push_str(&format!("{:02x}", byte as u8));
+            }
+            return Ok(ModuleCallResult::Return(context.string(&encoded)?));
+        }
+
+        if key == RANDOM_BYTES {
+            if args.len() != 1 || context.value_kind(args[0])? != ModuleValueKind::Number {
+                return Ok(thrown("crypto.randomBytes requires one byte count"));
+            }
+            let length = context.as_number(args[0])?;
+            if !length.is_finite() || length.fract() != 0.0 || !(1.0..=256.0).contains(&length) {
+                return Ok(thrown("crypto.randomBytes byte count must be an integer from 1 to 256"));
+            }
+            let counter = context.get_private(callee, RANDOM_COUNTER)?;
+            let counter = context.as_number(counter)? + 1.0;
+            let next = context.number(counter)?;
+            context.set_private(callee, RANDOM_COUNTER, next)?;
+            let encoded = context.string(&format!(
+                "{{\"operationId\":\"node-random-{counter:.0}\",\"length\":{length:.0}}}"
+            ))?;
+            return context.request_host(
+                HostRequestSpec {
+                    capability: CRYPTO_RANDOM_BYTES.into(),
+                    operation: CRYPTO_RANDOM_BYTES.into(),
+                    arguments: vec![encoded],
+                },
+                ModuleContinuation(RETURN_RANDOM_BYTES),
+                vec![],
+                false,
+            );
+        }
+
         let operation = match key {
-            RANDOM_BYTES => CRYPTO_RANDOM_BYTES,
             SHA256 => CRYPTO_SHA256,
             HMAC_SHA256 => CRYPTO_HMAC_SHA256,
             _ => {
                 return Err(ModuleError::ContractViolation(
-                    "unknown jjs-crypto function key".into(),
+                    "unknown crypto function key".into(),
                 ));
             }
         };
         if args.len() != 1 || context.value_kind(args[0])? != ModuleValueKind::Object {
             return Ok(thrown(format!(
-                "jjs-crypto {operation} requires exactly one options object"
+                "crypto {operation} requires exactly one options object"
             )));
         }
         let encoded = match context.json_stringify(args[0]) {
             Ok(encoded) => encoded,
             Err(_) => {
                 return Ok(thrown(
-                    "jjs-crypto options must be JSON-compatible and acyclic",
+                    "crypto options must be JSON-compatible and acyclic",
                 ));
             }
         };
@@ -136,22 +199,30 @@ impl NativeModule for CryptoModule {
         completion: Result<ValueHandle, String>,
         context: &mut dyn ModuleContext,
     ) -> Result<ModuleCallResult, ModuleError> {
-        if continuation.0 != RETURN_COMPLETION {
+        if !matches!(continuation.0, RETURN_COMPLETION | RETURN_RANDOM_BYTES) {
             return Err(ModuleError::ContractViolation(
-                "unknown jjs-crypto continuation".into(),
+                "unknown crypto continuation".into(),
             ));
         }
         match completion {
-            Ok(encoded) => context
-                .json_parse(encoded)
-                .map(ModuleCallResult::Return)
-                .map_err(|_| {
+            Ok(encoded) => {
+                let completion = context.json_parse(encoded).map_err(|_| {
                     ModuleError::ContractViolation(
-                        "jjs-crypto host completion was not valid JSON".into(),
+                        "crypto host completion was not valid JSON".into(),
                     )
-                }),
+                })?;
+                if continuation.0 == RETURN_RANDOM_BYTES {
+                    let result = context.get_property(completion, "result")?;
+                    let bytes = context.get_property(result, "bytes")?;
+                    let to_string = context.function(BYTES_TO_STRING)?;
+                    context.set_property(bytes, "toString", to_string)?;
+                    Ok(ModuleCallResult::Return(bytes))
+                } else {
+                    Ok(ModuleCallResult::Return(completion))
+                }
+            }
             Err(message) => Ok(ModuleCallResult::Throw {
-                name: "JjsCryptoError".into(),
+                name: "CryptoError".into(),
                 message,
             }),
         }
@@ -165,7 +236,7 @@ impl NativeModule for CryptoModule {
         _context: &mut dyn ModuleContext,
     ) -> Result<ModuleCallResult, ModuleError> {
         Err(ModuleError::ContractViolation(
-            "jjs-crypto has no guest events".into(),
+            "crypto has no guest events".into(),
         ))
     }
 }
@@ -177,8 +248,8 @@ mod tests {
     #[test]
     fn declares_exact_yielding_crypto_contracts() {
         let module = CryptoModule::default();
-        assert_eq!(module.manifest.imports, ["jjs-crypto"]);
-        assert_eq!(module.manifest.function_keys, [1, 2, 3]);
+        assert_eq!(module.manifest.imports, ["crypto", "node:crypto"]);
+        assert_eq!(module.manifest.function_keys, [1, 2, 3, 4]);
         assert_eq!(module.manifest.capabilities.len(), 3);
         for (index, id) in capability_ids().into_iter().enumerate() {
             assert_eq!(module.manifest.capabilities[index].id, id);
