@@ -83,7 +83,7 @@ impl Default for Sqlite3Module {
                 capabilities: vec![HostCapabilityDescriptor {
                     id: SQLITE_REQUEST.into(),
                     contract_version: 1,
-                    completion: CompletionMode::Yield,
+                    completion: CompletionMode::Sync,
                     schema: "jjs.sqlite.request.v1".into(),
                 }],
                 dependencies: vec![],
@@ -143,7 +143,8 @@ fn request(
     state: Vec<ValueHandle>,
 ) -> Result<ModuleCallResult, ModuleError> {
     arguments.insert(0, context.string(operation)?);
-    context.request_host(
+    let saved = state.clone();
+    let result = context.request_host(
         HostRequestSpec {
             capability: SQLITE_REQUEST.into(),
             operation: operation.into(),
@@ -152,7 +153,16 @@ fn request(
         ModuleContinuation(continuation),
         state,
         false,
-    )
+    )?;
+    match result {
+        ModuleCallResult::Return(completion) => Sqlite3Module::default().resume(
+            ModuleContinuation(continuation),
+            &saved,
+            Ok(completion),
+            context,
+        ),
+        other => Ok(other),
+    }
 }
 
 fn callback_or_undefined(
@@ -640,7 +650,7 @@ mod tests {
         assert_eq!(module.manifest().imports, ["sqlite3"]);
         assert_eq!(module.manifest().capabilities.len(), 1);
         assert_eq!(module.manifest().capabilities[0].id, SQLITE_REQUEST);
-        assert_eq!(module.manifest().capabilities[0].completion, CompletionMode::Yield);
+        assert_eq!(module.manifest().capabilities[0].completion, CompletionMode::Sync);
         assert!(module.manifest().function_keys.contains(&DATABASE.0));
         assert!(module.manifest().object_kind_keys.contains(&DATABASE_OBJECT.0));
     }
