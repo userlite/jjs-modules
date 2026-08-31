@@ -47,6 +47,8 @@ const NEXT_ERROR: u32 = 4;
 const ASYNC_RESPONSE: u32 = 5;
 const JSON_LIMIT: u32 = 6;
 const ASSET_MANIFEST: u32 = 7;
+const ASYNC_REQUEST: u32 = 8;
+const ASYNC_ERROR_HANDLERS: u32 = 9;
 
 pub struct ExpressModule {
     manifest: ModuleManifest,
@@ -710,12 +712,67 @@ enum HandlerFlow {
     Unsupported(String),
 }
 
+fn later_error_handlers(
+    context: &mut dyn ModuleContext,
+    layers: ValueHandle,
+    start: usize,
+    path: &str,
+) -> Result<ValueHandle, ModuleCallResult> {
+    let result = context.array().map_err(|error| throw(error.to_string()))?;
+    let length = context
+        .array_len(layers)
+        .map_err(|error| throw(error.to_string()))?;
+    for index in start..length {
+        let layer = context
+            .array_get(layers, index)
+            .map_err(|error| throw(error.to_string()))?;
+        if property_string(context, layer, "kind").map_err(|error| throw(error.to_string()))?
+            != "middleware"
+        {
+            continue;
+        }
+        let layer_path =
+            property_string(context, layer, "path").map_err(|error| throw(error.to_string()))?;
+        if match_path(&layer_path, path, true)?.is_none() {
+            continue;
+        }
+        let router = context
+            .get_property(layer, "router")
+            .map_err(|error| throw(error.to_string()))?;
+        if context.is_callable(router) {
+            continue;
+        }
+        let handlers = context
+            .get_property(layer, "handlers")
+            .map_err(|error| throw(error.to_string()))?;
+        for handler_index in 0..context
+            .array_len(handlers)
+            .map_err(|error| throw(error.to_string()))?
+        {
+            let handler = context
+                .array_get(handlers, handler_index)
+                .map_err(|error| throw(error.to_string()))?;
+            if context
+                .function_arity(handler)
+                .map_err(|error| throw(error.to_string()))?
+                == Some(4)
+            {
+                context
+                    .array_push(result, handler)
+                    .map_err(|error| throw(error.to_string()))?;
+            }
+        }
+    }
+    Ok(result)
+}
+
 fn call_handlers(
     context: &mut dyn ModuleContext,
     handlers: ValueHandle,
     request: ValueHandle,
     response: ValueHandle,
     mut error: Option<ValueHandle>,
+    async_error_handlers: Option<ValueHandle>,
 ) -> Result<HandlerFlow, ModuleCallResult> {
     for index in 0..context
         .array_len(handlers)
@@ -765,6 +822,14 @@ fn call_handlers(
                         context
                             .set_private(reject, ASYNC_RESPONSE, response)
                             .map_err(|e| throw(e.to_string()))?;
+                        context
+                            .set_private(reject, ASYNC_REQUEST, request)
+                            .map_err(|e| throw(e.to_string()))?;
+                        if let Some(handlers) = async_error_handlers {
+                            context
+                                .set_private(reject, ASYNC_ERROR_HANDLERS, handlers)
+                                .map_err(|e| throw(e.to_string()))?;
+                        }
                         let undefined = context.undefined();
                         context
                             .call(then, result, &[undefined, reject])
@@ -811,6 +876,55 @@ fn call_handlers(
     Ok(HandlerFlow::Advance(error))
 }
 
+fn express_error_response(
+    context: &mut dyn ModuleContext,
+    response: ValueHandle,
+    error: ValueHandle,
+) -> Result<ModuleCallResult, ModuleError> {
+    let error_kind = context.value_kind(error)?;
+    let is_object = matches!(error_kind, ModuleValueKind::Object | ModuleValueKind::Function);
+    let property = |context: &mut dyn ModuleContext, name: &str| {
+        if is_object {
+            context.get_property(error, name)
+        } else {
+            Ok(context.undefined())
+        }
+    };
+
+    let mut name = property(context, "name")?;
+    if context.value_kind(name)? != ModuleValueKind::String {
+        name = context.string("Error")?;
+    }
+    let mut message = property(context, "message")?;
+    if context.value_kind(message)? != ModuleValueKind::String {
+        message = context.string(&context.to_string(error)?)?;
+    }
+    let code = property(context, "code")?;
+    let stack = property(context, "stack")?;
+
+    let details = context.object()?;
+    context.set_property(details, "name", name)?;
+    context.set_property(details, "message", message)?;
+    if matches!(
+        context.value_kind(code)?,
+        ModuleValueKind::String | ModuleValueKind::Number
+    ) {
+        context.set_property(details, "code", code)?;
+    }
+    if context.value_kind(stack)? == ModuleValueKind::String {
+        context.set_property(details, "stack", stack)?;
+    }
+    let payload = context.object()?;
+    context.set_property(payload, "error", details)?;
+    let encoded = context.json_stringify(payload)?;
+    let encoded = context.as_string(encoded)?;
+
+    let status = context.number(500.0)?;
+    context.set_property(response, "statusCode", status)?;
+    response_type(context, response, "json")?;
+    response_end(context, response, Some(&encoded))
+}
+
 fn finish_response(
     context: &mut dyn ModuleContext,
     container: ValueHandle,
@@ -822,13 +936,10 @@ fn finish_response(
     if context.is_truthy(streaming)? && error.is_none() {
         return Ok(return_undefined(context));
     }
-    if error.is_some() {
+    if let Some(error) = error {
         let ended = context.get_property(response, "_expressEnded")?;
         if !context.is_truthy(ended)? {
-            let status = context.number(500.0)?;
-            context.set_property(response, "statusCode", status)?;
-            response_type(context, response, "text")?;
-            return response_end(context, response, Some("Express M1 internal error"));
+            return express_error_response(context, response, error);
         }
         return Ok(return_undefined(context));
     }
@@ -949,7 +1060,18 @@ fn run_container(
                 continue;
             }
             let handlers = context.get_property(layer, "handlers")?;
-            match call_handlers(context, handlers, request, response, error) {
+            let async_handlers = match later_error_handlers(context, layers, index + 1, &path) {
+                Ok(value) => value,
+                Err(result) => return Ok(result),
+            };
+            match call_handlers(
+                context,
+                handlers,
+                request,
+                response,
+                error,
+                Some(async_handlers),
+            ) {
                 Ok(HandlerFlow::Stop) => return Ok(return_undefined(context)),
                 Ok(HandlerFlow::Advance(next)) => error = next,
                 Ok(HandlerFlow::Unsupported(value)) => {
@@ -993,7 +1115,18 @@ fn run_container(
         };
         merge_params(context, request, &params)?;
         let handlers = context.get_property(layer, "handlers")?;
-        match call_handlers(context, handlers, request, response, None) {
+        let async_handlers = match later_error_handlers(context, layers, index + 1, &path) {
+            Ok(value) => value,
+            Err(result) => return Ok(result),
+        };
+        match call_handlers(
+            context,
+            handlers,
+            request,
+            response,
+            None,
+            Some(async_handlers),
+        ) {
             Ok(HandlerFlow::Stop) => return Ok(return_undefined(context)),
             Ok(HandlerFlow::Advance(next)) => error = next,
             Ok(HandlerFlow::Unsupported(value)) => {
@@ -1487,10 +1620,34 @@ impl NativeModule for ExpressModule {
                 let response = context.get_private(callee, ASYNC_RESPONSE)?;
                 let ended = context.get_property(response, "_expressEnded")?;
                 if !context.is_truthy(ended)? {
-                    let status = context.number(500.0)?;
-                    context.set_property(response, "statusCode", status)?;
-                    response_type(context, response, "text")?;
-                    return response_end(context, response, Some("Express M1 internal error"));
+                    let error = args.first().copied().unwrap_or_else(|| context.undefined());
+                    let handlers = context.get_private(callee, ASYNC_ERROR_HANDLERS)?;
+                    if context.value_kind(handlers)? == ModuleValueKind::Array
+                        && context.array_len(handlers)? > 0
+                    {
+                        let request = context.get_private(callee, ASYNC_REQUEST)?;
+                        match call_handlers(
+                            context,
+                            handlers,
+                            request,
+                            response,
+                            Some(error),
+                            None,
+                        ) {
+                            Ok(HandlerFlow::Stop) => return Ok(return_undefined(context)),
+                            Ok(HandlerFlow::Advance(Some(error))) => {
+                                return express_error_response(context, response, error);
+                            }
+                            Ok(HandlerFlow::Advance(None)) => return Ok(return_undefined(context)),
+                            Ok(HandlerFlow::Unsupported(value)) => {
+                                return Ok(throw(format!(
+                                    "Express M1 unsupported: next({value})"
+                                )));
+                            }
+                            Err(result) => return Ok(result),
+                        }
+                    }
+                    return express_error_response(context, response, error);
                 }
                 Ok(return_undefined(context))
             }

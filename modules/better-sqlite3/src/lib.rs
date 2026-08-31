@@ -134,6 +134,23 @@ fn unsupported(
     Ok(ModuleCallResult::ThrowValue(error))
 }
 
+fn sqlite_error(
+    context: &mut dyn ModuleContext,
+    message: &str,
+) -> Result<ModuleCallResult, ModuleError> {
+    let error = context.object()?;
+    let name = context.string("SqliteError")?;
+    let code = message
+        .split_once(':')
+        .map_or("SQLITE_ERROR", |(code, _)| code.trim());
+    let code = context.string(code)?;
+    let message = context.string(message)?;
+    context.set_property(error, "name", name)?;
+    context.set_property(error, "code", code)?;
+    context.set_property(error, "message", message)?;
+    Ok(ModuleCallResult::ThrowValue(error))
+}
+
 fn attach(
     context: &mut dyn ModuleContext,
     object: ValueHandle,
@@ -601,14 +618,14 @@ impl NativeModule for BetterSqlite3Module {
         })?;
         let completion = match completion {
             Ok(completion) => completion,
-            Err(message) => {
-                return Ok(ModuleCallResult::Throw {
-                    name: "SqliteError".into(),
-                    message,
-                });
-            }
+            Err(message) => return sqlite_error(context, &message),
         };
         let decoded = decoded_completion(context, completion)?;
+        let error = context.get_property(decoded, "__jjsSqliteError")?;
+        if context.value_kind(error)? == ModuleValueKind::String {
+            let message = context.as_string(error)?;
+            return sqlite_error(context, &message);
+        }
         match continuation.0 {
             OPEN_COMPLETE => {
                 let handle = context.get_property(decoded, "connection")?;

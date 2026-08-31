@@ -315,10 +315,7 @@ fn complete_error(
         invoke_callback(context, callback, receiver, &[error])?;
         Ok(ModuleCallResult::Return(receiver))
     } else {
-        Ok(ModuleCallResult::Throw {
-            name: "SqliteError".into(),
-            message,
-        })
+        Ok(ModuleCallResult::ThrowValue(error_value(context, &message)?))
     }
 }
 
@@ -602,6 +599,11 @@ impl NativeModule for Sqlite3Module {
             Err(message) => return complete_error(context, receiver, callback, message),
         };
         let decoded = decoded_completion(context, completion)?;
+        let error = context.get_property(decoded, "__jjsSqliteError")?;
+        if context.value_kind(error)? == ModuleValueKind::String {
+            let message = context.as_string(error)?;
+            return complete_error(context, receiver, callback, message);
+        }
         match continuation.0 {
             OPEN_COMPLETE => {
                 let handle = context.get_property(decoded, "connection")?;

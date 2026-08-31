@@ -26,6 +26,9 @@ These are working notes, not a finished specification. Update them after buildin
 5. Give unsupported features a structured `JJS_UNSUPPORTED_FEATURE` error with `retryable: false`; never substitute different behavior.
 6. Test through real guest JavaScript and the production host dispatcher, not only adapter unit tests.
 7. Persist module identities and capability contracts so freeze/wake cannot silently change the available API.
+8. Keep host resources service-scoped when guest objects are reused by request handlers; checkpoint both the guest handle and the host resource identity together.
+9. Return expected resource failures through the capability contract, then recreate them as normal JavaScript errors with stable `name`, `code`, and `message` fields. Do not let database errors escape as native-module contract violations.
+10. Framework adapters must pass the original JavaScript error to registered error middleware. If no middleware handles it, development responses must be structured and actionable instead of replacing it with a generic message.
 
 ## Node filesystem first surface
 
