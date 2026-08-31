@@ -23,7 +23,7 @@ use jjs_module_tps_fetch::TpsFetchModule;
 use jjs_module_tps_notify::TpsNotifyModule;
 use jjs_module_tps_secrets::TpsSecretsModule;
 
-pub const TPS_DEFAULT_PROFILE_ID: &str = "tps-default-v1";
+pub const TPS_DEFAULT_PROFILE_ID: &str = "tps-default-v2";
 
 pub struct ModuleProfile {
     pub id: &'static str,
@@ -56,9 +56,18 @@ pub fn tps_default_profile() -> Result<ModuleProfile, ModuleError> {
     let catalog = HostModuleCatalog {
         selections: modules
             .iter()
-            .map(|module| ModuleSelection {
-                identity: module.manifest().identity.clone(),
-                imports: module.manifest().imports.clone(),
+            .filter_map(|module| {
+                let imports: Vec<String> = module
+                    .manifest()
+                    .imports
+                    .iter()
+                    .filter(|specifier| !specifier.starts_with("tps-"))
+                    .cloned()
+                    .collect();
+                (!imports.is_empty()).then(|| ModuleSelection {
+                    identity: module.manifest().identity.clone(),
+                    imports,
+                })
             })
             .collect(),
     };
@@ -110,14 +119,20 @@ mod tests {
     #[test]
     fn default_profile_has_stable_identity_and_complete_catalog() {
         let profile = tps_default_profile().expect("standard profile");
-        assert_eq!(profile.id, "tps-default-v1");
-        assert_eq!(profile.catalog.selections.len(), 19);
+        assert_eq!(profile.id, "tps-default-v2");
+        assert_eq!(profile.catalog.selections.len(), 10);
         let import_count: usize = profile
             .catalog
             .selections
             .iter()
             .map(|selection| selection.imports.len())
             .sum();
-        assert_eq!(import_count, 25);
+        assert_eq!(import_count, 15);
+        assert!(profile.catalog.selections.iter().all(|selection| {
+            selection
+                .imports
+                .iter()
+                .all(|specifier| !specifier.starts_with("tps-"))
+        }));
     }
 }
