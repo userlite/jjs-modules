@@ -1,9 +1,9 @@
 //! Node `sqlite3` compatibility surface backed by host-owned session databases.
 
 use jjs_module_api::{
-    CompletionMode, HostCapabilityDescriptor, HostRequestSpec, MODULE_API_VERSION,
-    ModuleCallResult, ModuleContext, ModuleContinuation, ModuleError, ModuleFunctionKey,
-    ModuleIdentity, ModuleManifest, ModuleObjectKind, ModuleValueKind, NativeModule, ValueHandle,
+    CompletionMode, HostCapabilityDescriptor, HostRequestSpec, ModuleCallResult, ModuleContext,
+    ModuleContinuation, ModuleError, ModuleFunctionKey, ModuleIdentity, ModuleManifest,
+    ModuleObjectKind, ModuleValueKind, NativeModule, ValueHandle, MODULE_API_VERSION,
 };
 
 pub const SQLITE_REQUEST: &str = "jjs:sqlite/request";
@@ -36,12 +36,14 @@ const DB_PREPARE: ModuleFunctionKey = ModuleFunctionKey(15);
 const DB_CLOSE: ModuleFunctionKey = ModuleFunctionKey(16);
 const DB_SERIALIZE: ModuleFunctionKey = ModuleFunctionKey(17);
 const DB_PARALLELIZE: ModuleFunctionKey = ModuleFunctionKey(18);
+const DB_UNSUPPORTED: ModuleFunctionKey = ModuleFunctionKey(19);
 const STMT_RUN: ModuleFunctionKey = ModuleFunctionKey(30);
 const STMT_GET: ModuleFunctionKey = ModuleFunctionKey(31);
 const STMT_ALL: ModuleFunctionKey = ModuleFunctionKey(32);
 const STMT_BIND: ModuleFunctionKey = ModuleFunctionKey(33);
 const STMT_RESET: ModuleFunctionKey = ModuleFunctionKey(34);
 const STMT_FINALIZE: ModuleFunctionKey = ModuleFunctionKey(35);
+const STMT_UNSUPPORTED: ModuleFunctionKey = ModuleFunctionKey(36);
 
 const DATABASE_OBJECT: ModuleObjectKind = ModuleObjectKind(1);
 const STATEMENT_OBJECT: ModuleObjectKind = ModuleObjectKind(2);
@@ -99,12 +101,14 @@ impl Default for Sqlite3Module {
                     DB_CLOSE.0,
                     DB_SERIALIZE.0,
                     DB_PARALLELIZE.0,
+                    DB_UNSUPPORTED.0,
                     STMT_RUN.0,
                     STMT_GET.0,
                     STMT_ALL.0,
                     STMT_BIND.0,
                     STMT_RESET.0,
                     STMT_FINALIZE.0,
+                    STMT_UNSUPPORTED.0,
                 ],
                 object_kind_keys: vec![DATABASE_OBJECT.0, STATEMENT_OBJECT.0],
                 deterministic_resources: vec![],
@@ -118,6 +122,30 @@ fn thrown(message: impl Into<String>) -> ModuleCallResult {
         name: "TypeError".into(),
         message: message.into(),
     }
+}
+
+fn unsupported_message(feature: &str) -> String {
+    format!(
+        "JJS_UNSUPPORTED_FEATURE: {feature} is not supported by this JJS runtime. Retrying will not succeed."
+    )
+}
+
+fn unsupported(
+    context: &mut dyn ModuleContext,
+    feature: &str,
+) -> Result<ModuleCallResult, ModuleError> {
+    let error = context.object()?;
+    let name = context.string("JjsUnsupportedFeatureError")?;
+    let code = context.string("JJS_UNSUPPORTED_FEATURE")?;
+    let retryable = context.bool(false)?;
+    let feature_value = context.string(feature)?;
+    let message = context.string(&unsupported_message(feature))?;
+    context.set_property(error, "name", name)?;
+    context.set_property(error, "code", code)?;
+    context.set_property(error, "retryable", retryable)?;
+    context.set_property(error, "feature", feature_value)?;
+    context.set_property(error, "message", message)?;
+    Ok(ModuleCallResult::ThrowValue(error))
 }
 
 fn attach(
@@ -165,10 +193,7 @@ fn request(
     }
 }
 
-fn callback_or_undefined(
-    context: &mut dyn ModuleContext,
-    args: &[ValueHandle],
-) -> ValueHandle {
+fn callback_or_undefined(context: &mut dyn ModuleContext, args: &[ValueHandle]) -> ValueHandle {
     args.last()
         .copied()
         .filter(|value| context.is_callable(*value))
@@ -217,6 +242,10 @@ fn database(context: &mut dyn ModuleContext) -> Result<ValueHandle, ModuleError>
         ("close", DB_CLOSE),
         ("serialize", DB_SERIALIZE),
         ("parallelize", DB_PARALLELIZE),
+        ("backup", DB_UNSUPPORTED),
+        ("configure", DB_UNSUPPORTED),
+        ("interrupt", DB_UNSUPPORTED),
+        ("loadExtension", DB_UNSUPPORTED),
     ] {
         attach(context, value, name, key)?;
     }
@@ -236,6 +265,8 @@ fn statement(
         ("bind", STMT_BIND),
         ("reset", STMT_RESET),
         ("finalize", STMT_FINALIZE),
+        ("each", STMT_UNSUPPORTED),
+        ("map", STMT_UNSUPPORTED),
     ] {
         attach(context, value, name, key)?;
     }
@@ -254,10 +285,7 @@ fn invoke_callback(
     Ok(())
 }
 
-fn error_value(
-    context: &mut dyn ModuleContext,
-    message: &str,
-) -> Result<ValueHandle, ModuleError> {
+fn error_value(context: &mut dyn ModuleContext, message: &str) -> Result<ValueHandle, ModuleError> {
     let error = context.object()?;
     let name = context.string("Error")?;
     let code = message
@@ -359,10 +387,9 @@ impl NativeModule for Sqlite3Module {
                     return Ok(thrown("sqlite3.Database filename must be a string"));
                 }
                 let callback = callback_or_undefined(context, args);
-                let mode = args
-                    .get(1)
-                    .copied()
-                    .filter(|value| context.value_kind(*value).ok() == Some(ModuleValueKind::Number));
+                let mode = args.get(1).copied().filter(|value| {
+                    context.value_kind(*value).ok() == Some(ModuleValueKind::Number)
+                });
                 let mode = match mode {
                     Some(mode) => mode,
                     None => context.number(DEFAULT_OPEN_MODE)?,
@@ -480,7 +507,11 @@ impl NativeModule for Sqlite3Module {
                 )
             }
             DB_SERIALIZE | DB_PARALLELIZE => {
-                if args.len() > 1 || args.first().is_some_and(|value| !context.is_callable(*value)) {
+                if args.len() > 1
+                    || args
+                        .first()
+                        .is_some_and(|value| !context.is_callable(*value))
+                {
                     return Ok(thrown(
                         "SQLite serialize and parallelize accept only an optional callback",
                     ));
@@ -517,7 +548,9 @@ impl NativeModule for Sqlite3Module {
             }
             STMT_RESET | STMT_FINALIZE => {
                 if args.len() > 1 {
-                    return Ok(thrown("SQLite statement method accepts only an optional callback"));
+                    return Ok(thrown(
+                        "SQLite statement method accepts only an optional callback",
+                    ));
                 }
                 let handle = match require_handle(context, receiver, "statement")? {
                     Ok(handle) => handle,
@@ -536,6 +569,14 @@ impl NativeModule for Sqlite3Module {
                     continuation,
                     vec![receiver, callback],
                 )
+            }
+            DB_UNSUPPORTED | STMT_UNSUPPORTED => {
+                let feature = context
+                    .own_property_names(receiver)?
+                    .into_iter()
+                    .find(|name| context.get_property(receiver, name).ok() == Some(callee))
+                    .unwrap_or_else(|| "requested feature".into());
+                unsupported(context, &format!("sqlite3.{feature}"))
             }
             _ => Err(ModuleError::ContractViolation(
                 "unknown sqlite3 function key".into(),
@@ -587,10 +628,8 @@ impl NativeModule for Sqlite3Module {
             EACH_COMPLETE => {
                 let rows = context.get_property(decoded, "rows")?;
                 let row_callback = callback;
-                let complete_callback = state
-                    .get(2)
-                    .copied()
-                    .unwrap_or_else(|| context.undefined());
+                let complete_callback =
+                    state.get(2).copied().unwrap_or_else(|| context.undefined());
                 let none = null(context)?;
                 let count = context.array_len(rows)?;
                 for index in 0..count {
@@ -650,8 +689,22 @@ mod tests {
         assert_eq!(module.manifest().imports, ["sqlite3"]);
         assert_eq!(module.manifest().capabilities.len(), 1);
         assert_eq!(module.manifest().capabilities[0].id, SQLITE_REQUEST);
-        assert_eq!(module.manifest().capabilities[0].completion, CompletionMode::Sync);
+        assert_eq!(
+            module.manifest().capabilities[0].completion,
+            CompletionMode::Sync
+        );
         assert!(module.manifest().function_keys.contains(&DATABASE.0));
-        assert!(module.manifest().object_kind_keys.contains(&DATABASE_OBJECT.0));
+        assert!(module
+            .manifest()
+            .object_kind_keys
+            .contains(&DATABASE_OBJECT.0));
+    }
+
+    #[test]
+    fn unsupported_features_are_explicit_and_non_retryable() {
+        assert_eq!(
+            unsupported_message("sqlite3.loadExtension"),
+            "JJS_UNSUPPORTED_FEATURE: sqlite3.loadExtension is not supported by this JJS runtime. Retrying will not succeed."
+        );
     }
 }

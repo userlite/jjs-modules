@@ -109,13 +109,28 @@ fn thrown(message: impl Into<String>) -> ModuleCallResult {
     }
 }
 
-fn unsupported(feature: &str) -> ModuleCallResult {
-    ModuleCallResult::Throw {
-        name: "Error".into(),
-        message: format!(
-            "JJS_UNSUPPORTED_FEATURE: better-sqlite3.{feature} is not enabled by this host"
-        ),
-    }
+fn unsupported_message(feature: &str) -> String {
+    format!(
+        "JJS_UNSUPPORTED_FEATURE: {feature} is not supported by this JJS runtime. Retrying will not succeed."
+    )
+}
+
+fn unsupported(
+    context: &mut dyn ModuleContext,
+    feature: &str,
+) -> Result<ModuleCallResult, ModuleError> {
+    let error = context.object()?;
+    let name = context.string("JjsUnsupportedFeatureError")?;
+    let code = context.string("JJS_UNSUPPORTED_FEATURE")?;
+    let retryable = context.bool(false)?;
+    let feature_value = context.string(feature)?;
+    let message = context.string(&unsupported_message(feature))?;
+    context.set_property(error, "name", name)?;
+    context.set_property(error, "code", code)?;
+    context.set_property(error, "retryable", retryable)?;
+    context.set_property(error, "feature", feature_value)?;
+    context.set_property(error, "message", message)?;
+    Ok(ModuleCallResult::ThrowValue(error))
 }
 
 fn attach(
@@ -368,7 +383,7 @@ impl NativeModule for BetterSqlite3Module {
                     file_must_exist = option_bool(context, options, "fileMustExist")?;
                     let verbose = context.get_property(options, "verbose")?;
                     if context.value_kind(verbose)? != ModuleValueKind::Undefined {
-                        return Ok(unsupported("Database option verbose"));
+                        return unsupported(context, "better-sqlite3.Database option verbose");
                     }
                 }
                 let mode = if readonly {
@@ -564,7 +579,7 @@ impl NativeModule for BetterSqlite3Module {
                     .into_iter()
                     .find(|name| context.get_property(receiver, name).ok() == Some(callee))
                     .unwrap_or_else(|| "requested feature".into());
-                Ok(unsupported(&feature))
+                unsupported(context, &format!("better-sqlite3.{feature}"))
             }
             _ => Err(ModuleError::ContractViolation(
                 "unknown better-sqlite3 function key".into(),
@@ -700,11 +715,8 @@ mod tests {
     #[test]
     fn unsupported_features_are_explicit() {
         assert_eq!(
-            unsupported("loadExtension"),
-            ModuleCallResult::Throw {
-                name: "Error".into(),
-                message: "JJS_UNSUPPORTED_FEATURE: better-sqlite3.loadExtension is not enabled by this host".into(),
-            }
+            unsupported_message("better-sqlite3.loadExtension"),
+            "JJS_UNSUPPORTED_FEATURE: better-sqlite3.loadExtension is not supported by this JJS runtime. Retrying will not succeed."
         );
     }
 }
