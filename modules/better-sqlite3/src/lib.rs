@@ -518,14 +518,7 @@ impl NativeModule for BetterSqlite3Module {
                         if let Some(result) = rollback {
                             return Ok(result);
                         }
-                        let name = context.get_property(error, "name")?;
-                        let message = context.get_property(error, "message")?;
-                        Ok(ModuleCallResult::Throw {
-                            name: context.to_string(name).unwrap_or_else(|_| "Error".into()),
-                            message: context
-                                .to_string(message)
-                                .unwrap_or_else(|_| "transaction callback failed".into()),
-                        })
+                        Ok(ModuleCallResult::ThrowValue(error))
                     }
                 }
             }
