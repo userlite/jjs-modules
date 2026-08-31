@@ -81,6 +81,12 @@ pub use jjs_module_rate_limit::{
 pub use jjs_module_service::{
     SERVICE_FAIL, SERVICE_READY, capability_ids as service_capability_ids,
 };
+pub use jjs_module_sqlite3::{
+    SQLITE_ALL, SQLITE_CLOSE, SQLITE_EXEC, SQLITE_GET, SQLITE_OPEN, SQLITE_PREPARE,
+    SQLITE_REQUEST, SQLITE_RUN, SQLITE_STATEMENT_ALL, SQLITE_STATEMENT_BIND,
+    SQLITE_STATEMENT_FINALIZE, SQLITE_STATEMENT_GET, SQLITE_STATEMENT_RESET,
+    SQLITE_STATEMENT_RUN,
+};
 pub use jjs_module_tps_evidence::{
     EVIDENCE_OBSERVE, capability_ids as evidence_capability_ids,
 };
