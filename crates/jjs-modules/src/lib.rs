@@ -71,6 +71,7 @@ pub fn tps_default_profile() -> Result<ModuleProfile, ModuleError> {
 pub use jjs_module_crypto::{
     capability_ids as crypto_capability_ids, CRYPTO_HMAC_SHA256, CRYPTO_RANDOM_BYTES, CRYPTO_SHA256,
 };
+pub use jjs_module_better_sqlite3::BETTER_SQLITE3_CLOSE;
 pub use jjs_module_hazelcast::capability_ids as hazelcast_capability_ids;
 pub use jjs_module_node_http::{
     decode_response, HttpClient, HttpRequest, HttpResponse, HTTP_CLOSE_EVENT, HTTP_DRAIN_EVENT,

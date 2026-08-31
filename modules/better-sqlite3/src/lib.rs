@@ -11,6 +11,7 @@ pub const SQLITE_OPEN: &str = "jjs:sqlite/open";
 pub const SQLITE_EXEC: &str = "jjs:sqlite/exec";
 pub const SQLITE_PREPARE: &str = "jjs:sqlite/prepare";
 pub const SQLITE_CLOSE: &str = "jjs:sqlite/close";
+pub const BETTER_SQLITE3_CLOSE: &str = "jjs:sqlite/better/close";
 pub const SQLITE_ALL: &str = "jjs:sqlite/all";
 pub const SQLITE_STATEMENT_RUN: &str = "jjs:sqlite/statement/run";
 pub const SQLITE_STATEMENT_GET: &str = "jjs:sqlite/statement/get";
@@ -468,7 +469,7 @@ impl NativeModule for BetterSqlite3Module {
                 };
                 request(
                     context,
-                    SQLITE_CLOSE,
+                    BETTER_SQLITE3_CLOSE,
                     vec![handle],
                     CLOSE_COMPLETE,
                     vec![receiver],
