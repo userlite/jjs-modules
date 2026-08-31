@@ -29,15 +29,27 @@ pub struct CryptoModule {
 impl Default for CryptoModule {
     fn default() -> Self {
         let capabilities = [
-            (CRYPTO_RANDOM_BYTES, "jjs.crypto.random-bytes.v1"),
-            (CRYPTO_SHA256, "jjs.crypto.sha256.v1"),
-            (CRYPTO_HMAC_SHA256, "jjs.crypto.hmac-sha256.v1"),
+            (
+                CRYPTO_RANDOM_BYTES,
+                "jjs.crypto.random-bytes.v1",
+                CompletionMode::Sync,
+            ),
+            (
+                CRYPTO_SHA256,
+                "jjs.crypto.sha256.v1",
+                CompletionMode::Yield,
+            ),
+            (
+                CRYPTO_HMAC_SHA256,
+                "jjs.crypto.hmac-sha256.v1",
+                CompletionMode::Yield,
+            ),
         ]
         .into_iter()
-        .map(|(id, schema)| HostCapabilityDescriptor {
+        .map(|(id, schema, completion)| HostCapabilityDescriptor {
             id: id.into(),
             contract_version: 1,
-            completion: CompletionMode::Yield,
+            completion,
             schema: schema.into(),
         })
         .collect();
@@ -71,6 +83,27 @@ fn thrown(message: impl Into<String>) -> ModuleCallResult {
         name: "TypeError".into(),
         message: message.into(),
     }
+}
+
+fn random_bytes_value(
+    context: &mut dyn ModuleContext,
+    completion: ValueHandle,
+) -> Result<ModuleCallResult, ModuleError> {
+    let result = context.get_property(completion, "result")?;
+    let bytes = context.get_property(result, "bytes")?;
+    let to_string = context.function(BYTES_TO_STRING)?;
+    context.set_property(bytes, "toString", to_string)?;
+    Ok(ModuleCallResult::Return(bytes))
+}
+
+fn random_bytes_result(
+    context: &mut dyn ModuleContext,
+    encoded: ValueHandle,
+) -> Result<ModuleCallResult, ModuleError> {
+    let completion = context.json_parse(encoded).map_err(|_| {
+        ModuleError::ContractViolation("crypto host completion was not valid JSON".into())
+    })?;
+    random_bytes_value(context, completion)
 }
 
 impl NativeModule for CryptoModule {
@@ -146,7 +179,7 @@ impl NativeModule for CryptoModule {
             let encoded = context.string(&format!(
                 "{{\"operationId\":\"node-random-{counter:.0}\",\"length\":{length:.0}}}"
             ))?;
-            return context.request_host(
+            let encoded = match context.request_host(
                 HostRequestSpec {
                     capability: CRYPTO_RANDOM_BYTES.into(),
                     operation: CRYPTO_RANDOM_BYTES.into(),
@@ -155,7 +188,15 @@ impl NativeModule for CryptoModule {
                 ModuleContinuation(RETURN_RANDOM_BYTES),
                 vec![],
                 false,
-            );
+            )? {
+                ModuleCallResult::Return(encoded) => encoded,
+                _ => {
+                    return Err(ModuleError::ContractViolation(
+                        "synchronous crypto.randomBytes did not complete synchronously".into(),
+                    ));
+                }
+            };
+            return random_bytes_result(context, encoded);
         }
 
         let operation = match key {
@@ -212,11 +253,7 @@ impl NativeModule for CryptoModule {
                     )
                 })?;
                 if continuation.0 == RETURN_RANDOM_BYTES {
-                    let result = context.get_property(completion, "result")?;
-                    let bytes = context.get_property(result, "bytes")?;
-                    let to_string = context.function(BYTES_TO_STRING)?;
-                    context.set_property(bytes, "toString", to_string)?;
-                    Ok(ModuleCallResult::Return(bytes))
+                    random_bytes_value(context, completion)
                 } else {
                     Ok(ModuleCallResult::Return(completion))
                 }
@@ -246,7 +283,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn declares_exact_yielding_crypto_contracts() {
+    fn declares_exact_crypto_contracts() {
         let module = CryptoModule::default();
         assert_eq!(module.manifest.imports, ["crypto", "node:crypto"]);
         assert_eq!(module.manifest.function_keys, [1, 2, 3, 4]);
@@ -254,10 +291,12 @@ mod tests {
         for (index, id) in capability_ids().into_iter().enumerate() {
             assert_eq!(module.manifest.capabilities[index].id, id);
             assert_eq!(module.manifest.capabilities[index].contract_version, 1);
-            assert_eq!(
-                module.manifest.capabilities[index].completion,
+            let expected = if index == 0 {
+                CompletionMode::Sync
+            } else {
                 CompletionMode::Yield
-            );
+            };
+            assert_eq!(module.manifest.capabilities[index].completion, expected);
             assert!(module.manifest.capabilities[index].schema.ends_with(".v1"));
         }
     }
