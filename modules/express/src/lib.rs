@@ -49,6 +49,9 @@ const JSON_LIMIT: u32 = 6;
 const ASSET_MANIFEST: u32 = 7;
 const ASYNC_REQUEST: u32 = 8;
 const ASYNC_ERROR_HANDLERS: u32 = 9;
+const JSON_STRICT: u32 = 10;
+
+const DEFAULT_JSON_LIMIT: usize = 100 * 1024;
 
 pub struct ExpressModule {
     manifest: ModuleManifest,
@@ -64,7 +67,7 @@ impl Default for ExpressModule {
                     implementation: "jjs-module-express-v1".into(),
                 },
                 api_version: MODULE_API_VERSION,
-                state_version: 5,
+                state_version: 6,
                 imports: vec!["express".into()],
                 capabilities: vec![],
                 dependencies: vec![ModuleDependency {
@@ -103,6 +106,25 @@ fn named_throw(name: &str, message: impl Into<String>) -> ModuleCallResult {
 
 fn return_undefined(context: &mut dyn ModuleContext) -> ModuleCallResult {
     ModuleCallResult::Return(context.undefined())
+}
+
+fn parse_json_limit(value: &str) -> Option<usize> {
+    let value = value.trim().to_ascii_lowercase();
+    let split = value
+        .find(|character: char| !character.is_ascii_digit())
+        .unwrap_or(value.len());
+    let number = value[..split].parse::<usize>().ok()?;
+    if number == 0 {
+        return None;
+    }
+    let multiplier = match value[split..].trim() {
+        "" | "b" => 1,
+        "kb" => 1024,
+        "mb" => 1024 * 1024,
+        "gb" => 1024 * 1024 * 1024,
+        _ => return None,
+    };
+    number.checked_mul(multiplier)
 }
 
 fn property_string(
@@ -882,7 +904,10 @@ fn express_error_response(
     error: ValueHandle,
 ) -> Result<ModuleCallResult, ModuleError> {
     let error_kind = context.value_kind(error)?;
-    let is_object = matches!(error_kind, ModuleValueKind::Object | ModuleValueKind::Function);
+    let is_object = matches!(
+        error_kind,
+        ModuleValueKind::Object | ModuleValueKind::Function
+    );
     let property = |context: &mut dyn ModuleContext, name: &str| {
         if is_object {
             context.get_property(error, name)
@@ -1182,43 +1207,72 @@ impl NativeModule for ExpressModule {
                 }
             }
             EXPRESS_JSON => {
-                if args.len() != 1 {
+                if args.len() > 1 {
                     return Ok(type_throw(
-                        "express.json requires exactly one options object",
+                        "express.json accepts at most one options object",
                     ));
                 }
-                let mut names = match context.own_property_names(args[0]) {
-                    Ok(names) => names,
-                    Err(_) => return Ok(type_throw("express.json options must be an object")),
-                };
-                names.sort();
-                if names != ["limit", "strict"] {
-                    return Ok(type_throw(
-                        "express.json options require exactly limit and strict",
-                    ));
-                }
-                let limit = context.get_property(args[0], "limit")?;
-                let number = match context.as_number(limit) {
-                    Ok(number)
-                        if number.is_finite()
-                            && number.fract() == 0.0
-                            && (1.0..=9_007_199_254_740_991.0).contains(&number) =>
+                let mut limit = DEFAULT_JSON_LIMIT;
+                let mut strict = true;
+                if let Some(options) = args.first().copied() {
+                    if context.value_kind(options)? != ModuleValueKind::Object {
+                        return Ok(type_throw("express.json options must be an object"));
+                    }
+                    let names = context.own_property_names(options)?;
+                    if let Some(name) = names
+                        .iter()
+                        .find(|name| !matches!(name.as_str(), "limit" | "strict"))
                     {
-                        number
+                        return Ok(type_throw(format!(
+                            "express.json option {name:?} is not supported"
+                        )));
                     }
-                    _ => {
-                        return Ok(type_throw(
-                            "express.json limit must be a positive safe integer",
-                        ));
+                    if names.iter().any(|name| name == "limit") {
+                        let value = context.get_property(options, "limit")?;
+                        limit = match context.value_kind(value)? {
+                            ModuleValueKind::Number => {
+                                let number = context.as_number(value)?;
+                                if !number.is_finite()
+                                    || number.fract() != 0.0
+                                    || !(1.0..=usize::MAX as f64).contains(&number)
+                                {
+                                    return Ok(type_throw(
+                                        "express.json limit must be a positive integer or byte-size string",
+                                    ));
+                                }
+                                number as usize
+                            }
+                            ModuleValueKind::String => {
+                                let value = context.as_string(value)?;
+                                let Some(limit) = parse_json_limit(&value) else {
+                                    return Ok(type_throw(
+                                        "express.json limit must be a positive integer or byte-size string",
+                                    ));
+                                };
+                                limit
+                            }
+                            _ => {
+                                return Ok(type_throw(
+                                    "express.json limit must be a positive integer or byte-size string",
+                                ));
+                            }
+                        };
                     }
-                };
-                let strict = context.get_property(args[0], "strict")?;
-                if context.as_bool(strict).ok() != Some(true) {
-                    return Ok(type_throw("express.json strict must be true"));
+                    if names.iter().any(|name| name == "strict") {
+                        let value = context.get_property(options, "strict")?;
+                        strict = match context.as_bool(value) {
+                            Ok(value) => value,
+                            Err(_) => {
+                                return Ok(type_throw("express.json strict must be a boolean"));
+                            }
+                        };
+                    }
                 }
                 let middleware = context.function(JSON_MIDDLEWARE)?;
-                let limit = context.number(number)?;
+                let limit = context.number(limit as f64)?;
+                let strict = context.bool(strict)?;
                 context.set_private(middleware, JSON_LIMIT, limit)?;
+                context.set_private(middleware, JSON_STRICT, strict)?;
                 Ok(ModuleCallResult::Return(middleware))
             }
             EXPRESS_ASSETS => {
@@ -1335,10 +1389,11 @@ impl NativeModule for ExpressModule {
                     }
                 };
                 if raw.is_empty() {
-                    return Ok(named_throw(
-                        "ExpressJsonEmptyBodyError",
-                        "express.json request body is empty",
-                    ));
+                    let empty = context.object()?;
+                    context.set_property(request, "body", empty)?;
+                    let receiver = context.undefined();
+                    context.call(next, receiver, &[])?;
+                    return Ok(return_undefined(context));
                 }
                 let limit_value = context.get_private(callee, JSON_LIMIT)?;
                 let limit = context.as_number(limit_value)? as usize;
@@ -1358,10 +1413,13 @@ impl NativeModule for ExpressModule {
                         ));
                     }
                 };
-                if !matches!(
-                    context.value_kind(parsed)?,
-                    ModuleValueKind::Object | ModuleValueKind::Array
-                ) {
+                let strict = context.get_private(callee, JSON_STRICT)?;
+                if context.as_bool(strict)?
+                    && !matches!(
+                        context.value_kind(parsed)?,
+                        ModuleValueKind::Object | ModuleValueKind::Array
+                    )
+                {
                     return Ok(named_throw(
                         "ExpressJsonStrictError",
                         "express.json strict mode accepts only objects or arrays",
@@ -1625,23 +1683,15 @@ impl NativeModule for ExpressModule {
                         && context.array_len(handlers)? > 0
                     {
                         let request = context.get_private(callee, ASYNC_REQUEST)?;
-                        match call_handlers(
-                            context,
-                            handlers,
-                            request,
-                            response,
-                            Some(error),
-                            None,
-                        ) {
+                        match call_handlers(context, handlers, request, response, Some(error), None)
+                        {
                             Ok(HandlerFlow::Stop) => return Ok(return_undefined(context)),
                             Ok(HandlerFlow::Advance(Some(error))) => {
                                 return express_error_response(context, response, error);
                             }
                             Ok(HandlerFlow::Advance(None)) => return Ok(return_undefined(context)),
                             Ok(HandlerFlow::Unsupported(value)) => {
-                                return Ok(throw(format!(
-                                    "Express M1 unsupported: next({value})"
-                                )));
+                                return Ok(throw(format!("Express M1 unsupported: next({value})")));
                             }
                             Err(result) => return Ok(result),
                         }
@@ -1679,5 +1729,19 @@ impl NativeModule for ExpressModule {
         Err(ModuleError::ContractViolation(
             "Express does not receive host events directly".into(),
         ))
+    }
+}
+
+#[cfg(test)]
+mod json_option_tests {
+    use super::*;
+
+    #[test]
+    fn parses_standard_json_limit_strings() {
+        assert_eq!(parse_json_limit("100kb"), Some(102_400));
+        assert_eq!(parse_json_limit("1mb"), Some(1_048_576));
+        assert_eq!(parse_json_limit("512"), Some(512));
+        assert_eq!(parse_json_limit("0kb"), None);
+        assert_eq!(parse_json_limit("1kib"), None);
     }
 }

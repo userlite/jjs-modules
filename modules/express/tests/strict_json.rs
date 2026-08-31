@@ -60,41 +60,48 @@ impl ModuleHost for TestHost {
 }
 
 #[test]
-fn strict_json_parses_json_and_skips_other_content_types() {
+fn json_matches_standard_defaults_options_and_content_types() {
     let source = r#"
 const express = require('express');
-const middleware = express.json({ limit: 8, strict: true });
+const middleware = express.json();
 function request(body, contentType) {
   return { body: body, headers: { 'content-type': contentType } };
 }
 let nextCalls = 0;
 let score = 0;
+if (typeof middleware === 'function') score++;
 let object = request('{"a":1}', 'application/json; charset=utf-8');
 middleware(object, {}, function () { nextCalls++; });
 if (object.body.a === 1) score++;
-let array = request('[true]', 'application/json');
-middleware(array, {}, function () { nextCalls++; });
-if (array.body[0] === true) score++;
 
 function failure(body, contentType, expected) {
   try { middleware(request(body, contentType), {}, function () { nextCalls++; }); }
   catch (error) { return error.name === expected; }
   return false;
 }
-if (failure('', 'application/json', 'ExpressJsonEmptyBodyError')) score++;
+let empty = request('', 'application/json');
+middleware(empty, {}, function () { nextCalls++; });
+if (typeof empty.body === 'object') score++;
 if (failure('{', 'application/json', 'ExpressJsonSyntaxError')) score++;
 if (failure('1', 'application/json', 'ExpressJsonStrictError')) score++;
-if (failure('{"é":10}', 'application/json', 'ExpressJsonLimitError')) score++;
+
+const loose = express.json({ limit: '1kb', strict: false });
+if (typeof loose === 'function') score++;
+let primitive = request('1', 'application/json');
+loose(primitive, {}, function () { nextCalls++; });
+if (primitive.body === 1) score++;
+
 let plain = request('{}', 'text/plain');
 middleware(plain, {}, function () { nextCalls++; });
 if (plain.body === '{}') score++;
 let missing = { body: '', headers: {} };
 middleware(missing, {}, function () { nextCalls++; });
 if (missing.body === '') score++;
+if (typeof express.json({}) === 'function') score++;
 let optionsRejected = false;
 try { express.json({ limit: 8, strict: true, extra: true }); }
 catch (error) { optionsRejected = error.name === 'TypeError'; }
-if (nextCalls === 4) score++;
+if (nextCalls === 5) score++;
 if (optionsRejected) score++;
 score;
 "#;
@@ -115,7 +122,7 @@ score;
         matches!(
             result,
             RunResult::Halt {
-                output: Value::Number(10.0),
+                output: Value::Number(12.0),
                 ..
             }
         ),

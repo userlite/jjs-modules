@@ -381,6 +381,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "jjs-module-node-path"
+version = "0.1.0"
+dependencies = [
+ "jjs",
+ "jjs-module-api",
+]
+
+[[package]]
 name = "jjs-module-rate-limit"
 version = "0.1.0"
 dependencies = [
@@ -470,6 +478,7 @@ dependencies = [
  "jjs-module-json-schema",
  "jjs-module-node-fs",
  "jjs-module-node-http",
+ "jjs-module-node-path",
  "jjs-module-rate-limit",
  "jjs-module-resvg",
  "jjs-module-schedule",
