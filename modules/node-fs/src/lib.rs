@@ -295,7 +295,13 @@ fn unsupported(
 ) -> Result<ModuleCallResult, ModuleError> {
     let feature = context.get_private(callee, UNSUPPORTED_FEATURE)?;
     let feature = context.as_string(feature)?;
-    let qualified = format!("fs.{feature}");
+    unsupported_feature(context, &format!("fs.{feature}"))
+}
+
+fn unsupported_feature(
+    context: &mut dyn ModuleContext,
+    qualified: &str,
+) -> Result<ModuleCallResult, ModuleError> {
     let error = context.object()?;
     let name = context.string("JjsUnsupportedFeatureError")?;
     let code = context.string("JJS_UNSUPPORTED_FEATURE")?;
@@ -344,11 +350,8 @@ fn utf8_encoding(
     ))
 }
 
-fn binary_unsupported() -> ModuleCallResult {
-    ModuleCallResult::Throw {
-        name: "JjsUnsupportedFeatureError".into(),
-        message: "JJS_UNSUPPORTED_FEATURE: fs binary Buffer results are not supported until the Buffer module is available. Retrying will not succeed.".into(),
-    }
+fn binary_unsupported(context: &mut dyn ModuleContext) -> Result<ModuleCallResult, ModuleError> {
+    unsupported_feature(context, "fs binary Buffer results")
 }
 
 fn request(
@@ -404,7 +407,7 @@ fn call_api(
     match key {
         READ_SYNC | READ_PROMISE => {
             if !utf8_encoding(context, args.get(1).copied())? {
-                return Ok(binary_unsupported());
+                return binary_unsupported(context);
             }
             let (continuation, promise) = if key == READ_PROMISE {
                 (COMPLETE_READ_PROMISE, true)
@@ -425,7 +428,7 @@ fn call_api(
                 return Ok(thrown("fs.readFile requires a callback"));
             };
             if !utf8_encoding(context, args.get(1).copied().filter(|v| *v != callback))? {
-                return Ok(binary_unsupported());
+                return binary_unsupported(context);
             }
             request(
                 context,
@@ -441,12 +444,17 @@ fn call_api(
                 return Ok(thrown("fs write operation requires string data"));
             };
             if context.value_kind(data)? != ModuleValueKind::String {
-                return Ok(binary_unsupported());
+                return binary_unsupported(context);
             }
             if key == WRITE_CALLBACK {
                 let Some(callback) = callback_argument(context, args) else {
                     return Ok(thrown("fs.writeFile requires a callback"));
                 };
+                if let Some(options) = args.get(2).copied().filter(|value| *value != callback) {
+                    if !utf8_encoding(context, Some(options))? {
+                        return unsupported_feature(context, "fs.writeFile options");
+                    }
+                }
                 request(
                     context,
                     FS_WRITE,
@@ -456,6 +464,11 @@ fn call_api(
                     false,
                 )
             } else {
+                if let Some(options) = args.get(2).copied() {
+                    if !utf8_encoding(context, Some(options))? {
+                        return unsupported_feature(context, "fs.writeFile options");
+                    }
+                }
                 let (continuation, promise) = if key == WRITE_PROMISE {
                     (COMPLETE_WRITE_PROMISE, true)
                 } else {
@@ -472,6 +485,12 @@ fn call_api(
             }
         }
         READDIR_SYNC | READDIR_PROMISE | READDIR_CALLBACK => {
+            if args
+                .get(1)
+                .is_some_and(|value| !context.is_callable(*value))
+            {
+                return unsupported_feature(context, "fs.readdir options");
+            }
             if key == READDIR_CALLBACK {
                 let Some(callback) = callback_argument(context, args) else {
                     return Ok(thrown("fs.readdir requires a callback"));
@@ -501,6 +520,12 @@ fn call_api(
             }
         }
         STAT_SYNC | STAT_PROMISE | STAT_CALLBACK => {
+            if args
+                .get(1)
+                .is_some_and(|value| !context.is_callable(*value))
+            {
+                return unsupported_feature(context, "fs.stat options");
+            }
             if key == STAT_CALLBACK {
                 let Some(callback) = callback_argument(context, args) else {
                     return Ok(thrown("fs.stat requires a callback"));
@@ -534,9 +559,7 @@ fn call_api(
                 .get(1)
                 .is_some_and(|value| !context.is_callable(*value))
             {
-                return Ok(thrown(
-                    "fs mkdir options are not supported yet; create one directory whose parent exists",
-                ));
+                return unsupported_feature(context, "fs.mkdir options");
             }
             if key == MKDIR_CALLBACK {
                 let Some(callback) = callback_argument(context, args) else {
@@ -567,6 +590,19 @@ fn call_api(
             }
         }
         EXISTS_SYNC | EXISTS_CALLBACK | ACCESS_SYNC | ACCESS_PROMISE | ACCESS_CALLBACK => {
+            if matches!(key, ACCESS_SYNC | ACCESS_PROMISE | ACCESS_CALLBACK) {
+                if let Some(mode) = args
+                    .get(1)
+                    .copied()
+                    .filter(|value| !context.is_callable(*value))
+                {
+                    if context.value_kind(mode)? != ModuleValueKind::Number
+                        || context.as_number(mode)? != 0.0
+                    {
+                        return unsupported_feature(context, "fs.access modes other than F_OK");
+                    }
+                }
+            }
             let (continuation, promise, state) = match key {
                 EXISTS_SYNC => (COMPLETE_EXISTS_SYNC, false, path_state),
                 EXISTS_CALLBACK => {
