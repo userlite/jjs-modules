@@ -11,6 +11,11 @@ pub const FS_WRITE: &str = "jjs:fs/writeFile";
 pub const FS_LIST: &str = "jjs:fs/list";
 pub const FS_STAT: &str = "jjs:fs/stat";
 pub const FS_MKDIR: &str = "jjs:fs/mkdir";
+pub const FS_READ_SYNC: &str = "jjs:fs/readFileSync";
+pub const FS_WRITE_SYNC: &str = "jjs:fs/writeFileSync";
+pub const FS_LIST_SYNC: &str = "jjs:fs/listSync";
+pub const FS_STAT_SYNC: &str = "jjs:fs/statSync";
+pub const FS_MKDIR_SYNC: &str = "jjs:fs/mkdirSync";
 
 const READ_SYNC: ModuleFunctionKey = ModuleFunctionKey(1);
 const WRITE_SYNC: ModuleFunctionKey = ModuleFunctionKey(2);
@@ -64,15 +69,33 @@ const COMPLETE_MKDIR_PROMISE: u32 = 25;
 const COMPLETE_ACCESS_PROMISE: u32 = 27;
 
 fn capabilities() -> Vec<HostCapabilityDescriptor> {
-    [FS_READ, FS_WRITE, FS_LIST, FS_STAT, FS_MKDIR]
-        .into_iter()
-        .map(|id| HostCapabilityDescriptor {
+    [
+        (FS_READ, CompletionMode::Yield),
+        (FS_WRITE, CompletionMode::Yield),
+        (FS_LIST, CompletionMode::Yield),
+        (FS_STAT, CompletionMode::Yield),
+        (FS_MKDIR, CompletionMode::Yield),
+        (FS_READ_SYNC, CompletionMode::Sync),
+        (FS_WRITE_SYNC, CompletionMode::Sync),
+        (FS_LIST_SYNC, CompletionMode::Sync),
+        (FS_STAT_SYNC, CompletionMode::Sync),
+        (FS_MKDIR_SYNC, CompletionMode::Sync),
+    ]
+    .into_iter()
+    .map(|(id, completion)| {
+        let schema = if matches!(completion, CompletionMode::Sync) {
+            "jjs.fs.sync-request.v1"
+        } else {
+            "jjs.fs.request.v1"
+        };
+        HostCapabilityDescriptor {
             id: id.into(),
             contract_version: 1,
-            completion: CompletionMode::Yield,
-            schema: "jjs.fs.request.v1".into(),
-        })
-        .collect()
+            completion,
+            schema: schema.into(),
+        }
+    })
+    .collect()
 }
 
 fn fs_function_keys() -> Vec<u32> {
@@ -374,6 +397,50 @@ fn request(
     )
 }
 
+fn sync_request(
+    context: &mut dyn ModuleContext,
+    operation: &str,
+    arguments: Vec<ValueHandle>,
+    continuation: u32,
+    state: Vec<ValueHandle>,
+) -> Result<ModuleCallResult, ModuleError> {
+    let encoded = match request(
+        context,
+        operation,
+        arguments,
+        continuation,
+        state.clone(),
+        false,
+    )? {
+        ModuleCallResult::Return(encoded) => encoded,
+        _ => {
+            return Err(ModuleError::ContractViolation(
+                "synchronous node fs host operation did not complete synchronously".into(),
+            ));
+        }
+    };
+    let envelope = context.json_parse(encoded).map_err(|_| {
+        ModuleError::ContractViolation("node fs sync completion was not valid JSON".into())
+    })?;
+    let ok = context.get_property(envelope, "ok")?;
+    let completion = if context.as_bool(ok)? {
+        if matches!(continuation, COMPLETE_WRITE_SYNC | COMPLETE_MKDIR_SYNC) {
+            Ok(context.undefined())
+        } else {
+            Ok(context.get_property(envelope, "value")?)
+        }
+    } else {
+        let error = context.get_property(envelope, "error")?;
+        Err(context.as_string(error)?)
+    };
+    resume_api(
+        ModuleContinuation(continuation),
+        &state,
+        completion,
+        context,
+    )
+}
+
 fn callback_argument(context: &dyn ModuleContext, args: &[ValueHandle]) -> Option<ValueHandle> {
     args.last()
         .copied()
@@ -408,6 +475,15 @@ fn call_api(
         READ_SYNC | READ_PROMISE => {
             if !utf8_encoding(context, args.get(1).copied())? {
                 return binary_unsupported(context);
+            }
+            if key == READ_SYNC {
+                return sync_request(
+                    context,
+                    FS_READ_SYNC,
+                    vec![path],
+                    COMPLETE_READ_SYNC,
+                    path_state,
+                );
             }
             let (continuation, promise) = if key == READ_PROMISE {
                 (COMPLETE_READ_PROMISE, true)
@@ -463,6 +539,19 @@ fn call_api(
                     vec![callback, path],
                     false,
                 )
+            } else if key == WRITE_SYNC {
+                if let Some(options) = args.get(2).copied() {
+                    if !utf8_encoding(context, Some(options))? {
+                        return unsupported_feature(context, "fs.writeFile options");
+                    }
+                }
+                sync_request(
+                    context,
+                    FS_WRITE_SYNC,
+                    vec![path, data],
+                    COMPLETE_WRITE_SYNC,
+                    path_state,
+                )
             } else {
                 if let Some(options) = args.get(2).copied() {
                     if !utf8_encoding(context, Some(options))? {
@@ -503,6 +592,14 @@ fn call_api(
                     vec![callback, path],
                     false,
                 )
+            } else if key == READDIR_SYNC {
+                sync_request(
+                    context,
+                    FS_LIST_SYNC,
+                    vec![path],
+                    COMPLETE_READDIR_SYNC,
+                    path_state,
+                )
             } else {
                 let (continuation, promise) = if key == READDIR_PROMISE {
                     (COMPLETE_READDIR_PROMISE, true)
@@ -538,6 +635,14 @@ fn call_api(
                     vec![callback, path],
                     false,
                 )
+            } else if key == STAT_SYNC {
+                sync_request(
+                    context,
+                    FS_STAT_SYNC,
+                    vec![path],
+                    COMPLETE_STAT_SYNC,
+                    path_state,
+                )
             } else {
                 let (continuation, promise) = if key == STAT_PROMISE {
                     (COMPLETE_STAT_PROMISE, true)
@@ -572,6 +677,14 @@ fn call_api(
                     COMPLETE_MKDIR_CALLBACK,
                     vec![callback, path],
                     false,
+                )
+            } else if key == MKDIR_SYNC {
+                sync_request(
+                    context,
+                    FS_MKDIR_SYNC,
+                    vec![path],
+                    COMPLETE_MKDIR_SYNC,
+                    path_state,
                 )
             } else {
                 let (continuation, promise) = if key == MKDIR_PROMISE {
@@ -621,7 +734,11 @@ fn call_api(
                 }
                 _ => unreachable!(),
             };
-            request(context, FS_STAT, vec![path], continuation, state, promise)
+            if matches!(key, EXISTS_SYNC | ACCESS_SYNC) {
+                sync_request(context, FS_STAT_SYNC, vec![path], continuation, state)
+            } else {
+                request(context, FS_STAT, vec![path], continuation, state, promise)
+            }
         }
         _ => Err(ModuleError::ContractViolation(
             "unknown node fs function key".into(),
