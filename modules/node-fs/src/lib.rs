@@ -694,12 +694,27 @@ fn call_api(
             }
         }
         MKDIR_SYNC | MKDIR_PROMISE | MKDIR_CALLBACK => {
-            if args
-                .get(1)
-                .is_some_and(|value| !context.is_callable(*value))
-            {
-                return unsupported_feature(context, "fs.mkdir options");
-            }
+            let recursive = match args.get(1).copied() {
+                None => false,
+                Some(value) if context.is_callable(value) => false,
+                Some(value) => match context.value_kind(value)? {
+                    ModuleValueKind::Undefined => false,
+                    ModuleValueKind::Object => {
+                        let recursive = context.get_property(value, "recursive")?;
+                        match context.value_kind(recursive)? {
+                            ModuleValueKind::Undefined => false,
+                            ModuleValueKind::Bool => context.as_bool(recursive)?,
+                            _ => return Ok(thrown("fs.mkdir option recursive must be a boolean")),
+                        }
+                    }
+                    _ => {
+                        return Ok(thrown(
+                            "fs.mkdir options must be an object such as { recursive: true }",
+                        ));
+                    }
+                },
+            };
+            let recursive = context.bool(recursive)?;
             if key == MKDIR_CALLBACK {
                 let Some(callback) = callback_argument(context, args) else {
                     return Ok(thrown("fs.mkdir requires a callback"));
@@ -707,7 +722,7 @@ fn call_api(
                 request(
                     context,
                     FS_MKDIR,
-                    vec![path],
+                    vec![path, recursive],
                     COMPLETE_MKDIR_CALLBACK,
                     vec![callback, path],
                     false,
@@ -716,7 +731,7 @@ fn call_api(
                 sync_request(
                     context,
                     FS_MKDIR_SYNC,
-                    vec![path],
+                    vec![path, recursive],
                     COMPLETE_MKDIR_SYNC,
                     path_state,
                 )
@@ -729,7 +744,7 @@ fn call_api(
                 request(
                     context,
                     FS_MKDIR,
-                    vec![path],
+                    vec![path, recursive],
                     continuation,
                     path_state,
                     promise,

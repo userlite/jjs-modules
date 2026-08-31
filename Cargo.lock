@@ -291,7 +291,7 @@ checksum = "8f42a60cbdf9a97f5d2305f08a87dc4e09308d1276d28c869c684d7777685682"
 [[package]]
 name = "jjs"
 version = "0.1.0"
-source = "git+https://github.com/userlite/jjs.git?rev=5225094#5225094800ce6bec7824f88db4433b787de5f42b"
+source = "git+https://github.com/userlite/jjs.git?rev=6d475b9#6d475b9dcd33ae6d9bd251237be1de31ae0d7a52"
 dependencies = [
  "bincode",
  "glob",
@@ -308,7 +308,7 @@ dependencies = [
 [[package]]
 name = "jjs-font-api"
 version = "0.1.0"
-source = "git+https://github.com/userlite/jjs.git?rev=5225094#5225094800ce6bec7824f88db4433b787de5f42b"
+source = "git+https://github.com/userlite/jjs.git?rev=6d475b9#6d475b9dcd33ae6d9bd251237be1de31ae0d7a52"
 dependencies = [
  "serde",
  "sha2",
@@ -318,7 +318,7 @@ dependencies = [
 [[package]]
 name = "jjs-module-api"
 version = "0.1.0"
-source = "git+https://github.com/userlite/jjs.git?rev=5225094#5225094800ce6bec7824f88db4433b787de5f42b"
+source = "git+https://github.com/userlite/jjs.git?rev=6d475b9#6d475b9dcd33ae6d9bd251237be1de31ae0d7a52"
 dependencies = [
  "jjs-font-api",
  "serde",
