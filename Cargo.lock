@@ -325,6 +325,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "jjs-module-better-sqlite3"
+version = "0.1.0"
+dependencies = [
+ "jjs-module-api",
+ "serde_json",
+]
+
+[[package]]
 name = "jjs-module-crypto"
 version = "0.1.0"
 dependencies = [
@@ -448,6 +456,7 @@ name = "jjs-modules"
 version = "0.1.0"
 dependencies = [
  "jjs-module-api",
+ "jjs-module-better-sqlite3",
  "jjs-module-crypto",
  "jjs-module-express",
  "jjs-module-hazelcast",

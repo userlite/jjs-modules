@@ -4,6 +4,7 @@ use jjs_module_api::{
     HostModuleCatalog, ModuleError, ModuleProvider, ModuleProviderBuilder, ModuleSelection,
     NativeModule,
 };
+use jjs_module_better_sqlite3::BetterSqlite3Module;
 use jjs_module_crypto::CryptoModule;
 use jjs_module_express::ExpressModule;
 use jjs_module_hazelcast::HazelcastModule;
@@ -30,6 +31,7 @@ pub struct ModuleProfile {
 
 pub fn tps_default_profile() -> Result<ModuleProfile, ModuleError> {
     let modules: Vec<Arc<dyn NativeModule>> = vec![
+        Arc::new(BetterSqlite3Module::default()),
         Arc::new(NodeHttpModule::default()),
         Arc::new(ExpressModule::default()),
         Arc::new(HazelcastModule::default()),
@@ -67,38 +69,31 @@ pub fn tps_default_profile() -> Result<ModuleProfile, ModuleError> {
 }
 
 pub use jjs_module_crypto::{
-    CRYPTO_HMAC_SHA256, CRYPTO_RANDOM_BYTES, CRYPTO_SHA256,
-    capability_ids as crypto_capability_ids,
+    capability_ids as crypto_capability_ids, CRYPTO_HMAC_SHA256, CRYPTO_RANDOM_BYTES, CRYPTO_SHA256,
 };
 pub use jjs_module_hazelcast::capability_ids as hazelcast_capability_ids;
 pub use jjs_module_node_http::{
-    HTTP_CLOSE_EVENT, HTTP_DRAIN_EVENT, HTTP_REQUEST_EVENT, HTTP_RESPONSE_EVENT,
-    HTTP_STREAM_CONTRACT_VERSION, HttpClient, HttpRequest, HttpResponse, decode_response,
+    decode_response, HttpClient, HttpRequest, HttpResponse, HTTP_CLOSE_EVENT, HTTP_DRAIN_EVENT,
+    HTTP_REQUEST_EVENT, HTTP_RESPONSE_EVENT, HTTP_STREAM_CONTRACT_VERSION,
 };
 pub use jjs_module_rate_limit::{
-    RATE_LIMIT_CONSUME, RATE_LIMIT_OPEN, capability_ids as rate_limit_capability_ids,
+    capability_ids as rate_limit_capability_ids, RATE_LIMIT_CONSUME, RATE_LIMIT_OPEN,
 };
 pub use jjs_module_service::{
-    SERVICE_FAIL, SERVICE_READY, capability_ids as service_capability_ids,
+    capability_ids as service_capability_ids, SERVICE_FAIL, SERVICE_READY,
 };
 pub use jjs_module_sqlite3::{
     OPEN_CREATE, OPEN_READONLY, OPEN_READWRITE, SQLITE_ALL, SQLITE_CLOSE, SQLITE_EXEC, SQLITE_GET,
     SQLITE_OPEN, SQLITE_PREPARE, SQLITE_REQUEST, SQLITE_RUN, SQLITE_STATEMENT_ALL,
-    SQLITE_STATEMENT_BIND, SQLITE_STATEMENT_FINALIZE, SQLITE_STATEMENT_GET,
-    SQLITE_STATEMENT_RESET, SQLITE_STATEMENT_RUN,
+    SQLITE_STATEMENT_BIND, SQLITE_STATEMENT_FINALIZE, SQLITE_STATEMENT_GET, SQLITE_STATEMENT_RESET,
+    SQLITE_STATEMENT_RUN,
 };
-pub use jjs_module_tps_evidence::{
-    EVIDENCE_OBSERVE, capability_ids as evidence_capability_ids,
-};
-pub use jjs_module_tps_fetch::{
-    OUTBOUND_HTTP_FETCH, capability_ids as fetch_capability_ids,
-};
-pub use jjs_module_tps_notify::{
-    NOTIFICATION_SEND, capability_ids as notify_capability_ids,
-};
+pub use jjs_module_tps_evidence::{capability_ids as evidence_capability_ids, EVIDENCE_OBSERVE};
+pub use jjs_module_tps_fetch::{capability_ids as fetch_capability_ids, OUTBOUND_HTTP_FETCH};
+pub use jjs_module_tps_notify::{capability_ids as notify_capability_ids, NOTIFICATION_SEND};
 pub use jjs_module_tps_secrets::{
-    SECRETS_DELETE, SECRETS_GENERATE, SECRETS_IMPORT, SECRETS_ROTATE, SECRETS_VERIFY,
-    capability_ids as secrets_capability_ids,
+    capability_ids as secrets_capability_ids, SECRETS_DELETE, SECRETS_GENERATE, SECRETS_IMPORT,
+    SECRETS_ROTATE, SECRETS_VERIFY,
 };
 
 #[cfg(test)]
@@ -109,13 +104,13 @@ mod tests {
     fn default_profile_has_stable_identity_and_complete_catalog() {
         let profile = tps_default_profile().expect("standard profile");
         assert_eq!(profile.id, "tps-default-v1");
-        assert_eq!(profile.catalog.selections.len(), 15);
+        assert_eq!(profile.catalog.selections.len(), 16);
         let import_count: usize = profile
             .catalog
             .selections
             .iter()
             .map(|selection| selection.imports.len())
             .sum();
-        assert_eq!(import_count, 16);
+        assert_eq!(import_count, 17);
     }
 }

@@ -16,6 +16,7 @@ members = [
     "modules/jjs-crypto",
     "modules/resvg",
     "modules/sqlite3",
+    "modules/better-sqlite3",
 ]
 resolver = "2"
 
