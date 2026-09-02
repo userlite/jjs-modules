@@ -447,8 +447,10 @@ fn sync_request(
             ));
         }
     };
-    let envelope = context.json_parse(encoded).map_err(|_| {
-        ModuleError::ContractViolation("node fs sync completion was not valid JSON".into())
+    let envelope = context.json_parse(encoded).map_err(|error| {
+        ModuleError::ContractViolation(format!(
+            "node fs sync completion could not be decoded: {error}"
+        ))
     })?;
     let ok = context.get_property(envelope, "ok")?;
     let completion = if context.as_bool(ok)? {
