@@ -83,11 +83,17 @@ impl NativeModule for TpsFetchModule {
             ));
         }
         if args.len() != 1 || context.value_kind(args[0])? != ModuleValueKind::Object {
-            return Ok(thrown("tps-fetch fetch requires exactly one request object"));
+            return Ok(thrown(
+                "tps-fetch fetch requires exactly one request object",
+            ));
         }
         let encoded = match context.json_stringify(args[0]) {
             Ok(encoded) => encoded,
-            Err(_) => return Ok(thrown("tps-fetch request must be JSON-compatible and acyclic")),
+            Err(_) => {
+                return Ok(thrown(
+                    "tps-fetch request must be JSON-compatible and acyclic",
+                ))
+            }
         };
         context.request_host(
             HostRequestSpec {

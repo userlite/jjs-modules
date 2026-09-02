@@ -315,7 +315,9 @@ fn complete_error(
         invoke_callback(context, callback, receiver, &[error])?;
         Ok(ModuleCallResult::Return(receiver))
     } else {
-        Ok(ModuleCallResult::ThrowValue(error_value(context, &message)?))
+        Ok(ModuleCallResult::ThrowValue(error_value(
+            context, &message,
+        )?))
     }
 }
 
