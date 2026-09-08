@@ -28,5 +28,5 @@ edition = "2021"
 license = "MIT"
 
 [workspace.dependencies]
-jjs = { git = "https://github.com/userlite/jjs.git", rev = "819e6bab18c38b5e2d4c97a203510b372ae6191d", default-features = false }
-jjs-module-api = { git = "https://github.com/userlite/jjs.git", rev = "819e6bab18c38b5e2d4c97a203510b372ae6191d" }
+jjs = { git = "https://github.com/userlite/jjs.git", rev = "a7983d88dda8addfa83044b30a0ee97db203163d", default-features = false }
+jjs-module-api = { git = "https://github.com/userlite/jjs.git", rev = "a7983d88dda8addfa83044b30a0ee97db203163d" }
