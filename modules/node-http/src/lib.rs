@@ -6,6 +6,7 @@ use jjs_module_api::{
     ModuleObjectKind, NativeModule, ValueHandle, MODULE_API_VERSION,
 };
 use jjs_module_node_buffer as buffer;
+pub mod input;
 use jjs_module_node_events as listeners;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
@@ -346,10 +347,10 @@ impl Default for NodeHttpModule {
                 identity: ModuleIdentity {
                     id: "org.jjs.node-http".into(),
                     version: env!("CARGO_PKG_VERSION").into(),
-                    implementation: "jjs-module-node-http-v3".into(),
+                    implementation: "jjs-module-node-http-v4".into(),
                 },
                 api_version: MODULE_API_VERSION,
-                state_version: 4,
+                state_version: 5,
                 imports: vec!["http".into(), "node:http".into()],
                 capabilities: vec![
                     HostCapabilityDescriptor {
@@ -381,6 +382,11 @@ impl Default for NodeHttpModule {
                     RESPONSE_ON.0,
                     RESPONSE_WRITE_HEAD.0,
                     REQUEST_SET_ENCODING.0,
+                    11,
+                    12,
+                    13,
+                    14,
+                    15,
                     100,
                     101,
                     102,
@@ -758,13 +764,29 @@ impl NativeModule for NodeHttpModule {
     fn call(
         &self,
         key: ModuleFunctionKey,
-        _callee: ValueHandle,
+        callee: ValueHandle,
         receiver: ValueHandle,
         args: &[ValueHandle],
         context: &mut dyn ModuleContext,
     ) -> Result<ModuleCallResult, ModuleError> {
+        if (11..=15).contains(&key.0) {
+            return input::call(context, key, callee, receiver, args);
+        }
         if listeners::FUNCTION_KEYS.contains(&key.0) {
-            return listeners::call(context, key, receiver, args);
+            input::listener_added(context, receiver, key, args)?;
+            let out = listeners::call(context, key, receiver, args)?;
+            if matches!(key, listeners::ON | listeners::ONCE)
+                && matches!(out, ModuleCallResult::Return(_))
+                && args.len() == 2
+                && context.as_string(args[0])? == "data"
+                && input::enabled(context, receiver)?
+            {
+                let drained = input::drain(context, receiver)?;
+                if !matches!(drained, ModuleCallResult::Return(_)) {
+                    return Ok(drained);
+                }
+            }
+            return Ok(out);
         }
         let result = (|| match key {
             CREATE_SERVER => {
@@ -937,11 +959,22 @@ impl NativeModule for NodeHttpModule {
                 let encoded_headers = context.string(&encoded_headers)?;
                 context.set_private(receiver, HEADERS_JSON, encoded_headers)?;
                 commit(context, receiver)?;
+                if input::enabled(context, receiver)? {
+                    return start_stream(context, receiver);
+                }
                 Ok(ModuleCallResult::Return(receiver))
             }
             RESPONSE_END => {
                 if args.len() > 1 {
                     return Ok(thrown("node_http_response_end_arity_invalid"));
+                }
+                if input::enabled(context, receiver)?
+                    && response_lifecycle(context, receiver)? == "buffered"
+                {
+                    let result = start_stream(context, receiver)?;
+                    if !matches!(result, ModuleCallResult::Return(_)) {
+                        return Ok(result);
+                    }
                 }
                 let bytes = if let Some(v) = args.first() {
                     Some(chunk_bytes(context, *v)?)
@@ -1054,6 +1087,9 @@ impl NativeModule for NodeHttpModule {
         payload: ValueHandle,
         context: &mut dyn ModuleContext,
     ) -> Result<ModuleCallResult, ModuleError> {
+        if (input::DATA..=input::STATE).contains(&event) {
+            return input::event(context, target, event, payload);
+        }
         if event == HTTP_RESPONSE_EVENT {
             return encode_response(context, payload);
         }
@@ -1064,7 +1100,7 @@ impl NativeModule for NodeHttpModule {
                 ));
             }
             validate_stream_event(context, target, payload)?;
-            let emitted = listeners::emit(context, target, "drain", &[])?;
+            let emitted = input::emit(context, target, "drain", &[])?;
             if !matches!(emitted, ModuleCallResult::Return(_)) {
                 return Ok(emitted);
             }
@@ -1082,17 +1118,21 @@ impl NativeModule for NodeHttpModule {
             context.set_private(target, CLOSE_DELIVERED, yes)?;
             set_response_lifecycle(context, target, HttpResponseLifecycle::Closed)?;
             let request = context.get_private(target, REQUEST_HANDLE)?;
-            let emitted = listeners::emit(context, request, "close", &[])?;
+            let emitted = input::close(context, request)?;
             if !matches!(emitted, ModuleCallResult::Return(_)) {
                 return Ok(emitted);
             }
-            let emitted = listeners::emit(context, target, "close", &[])?;
+            let emitted = input::emit(context, request, "close", &[])?;
+            if !matches!(emitted, ModuleCallResult::Return(_)) {
+                return Ok(emitted);
+            }
+            let emitted = input::emit(context, target, "close", &[])?;
             if !matches!(emitted, ModuleCallResult::Return(_)) {
                 return Ok(emitted);
             }
             return Ok(ModuleCallResult::Return(target));
         }
-        if event != HTTP_REQUEST_EVENT {
+        if event != HTTP_REQUEST_EVENT && event != input::START {
             return Err(ModuleError::ContractViolation(
                 "unsupported node:http event".into(),
             ));
@@ -1109,6 +1149,11 @@ impl NativeModule for NodeHttpModule {
         let raw = context.get_property(payload, "bodyBase64")?;
         let bytes = buffer::encode(&context.as_string(raw)?, "base64")?;
         let body = buffer::from_bytes(context, &bytes)?;
+        let body = if event == input::START {
+            context.undefined()
+        } else {
+            body
+        };
         context.set_property(request, "body", body)?;
         let encoding = context.undefined();
         context.set_private(request, TEXT_ENCODING, encoding)?;
@@ -1116,7 +1161,11 @@ impl NativeModule for NodeHttpModule {
         context.set_private(request, DATA_STARTED, started)?;
         let setter = context.function(REQUEST_SET_ENCODING)?;
         context.set_property(request, "setEncoding", setter)?;
-        listeners::install(context, request, &["data", "end", "close", "error"])?;
+        listeners::install(
+            context,
+            request,
+            &["data", "readable", "end", "aborted", "close", "error"],
+        )?;
 
         let response = context.module_object(RESPONSE)?;
         listeners::install(context, response, &["drain", "close", "error"])?;
@@ -1157,9 +1206,15 @@ impl NativeModule for NodeHttpModule {
         let close_delivered = context.bool(false)?;
         context.set_private(response, CLOSE_DELIVERED, close_delivered)?;
 
-        let emitted = listeners::emit(context, target, "request", &[request, response])?;
+        input::install(context, request, response, event == input::START)?;
+        let streamed = context.bool(event == input::START)?;
+        context.set_property(request, "streamedInput", streamed)?;
+        let emitted = input::server_emit(context, target, request, response)?;
         if !matches!(emitted, ModuleCallResult::Return(_)) {
             return Ok(emitted);
+        }
+        if event == input::START {
+            return Ok(ModuleCallResult::Return(response));
         }
         let enc = context.get_private(request, TEXT_ENCODING)?;
         let encoding = if context.value_kind(enc)? == jjs_module_api::ModuleValueKind::Undefined {

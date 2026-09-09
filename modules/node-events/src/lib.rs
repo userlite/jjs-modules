@@ -135,6 +135,17 @@ pub fn emit(
     event: &str,
     args: &[Value],
 ) -> Result<Outcome, Error> {
+    emit_capturing(c, receiver, event, args, None)
+}
+
+/// HTTP observes async listener failures without making listener calls asynchronous.
+pub fn emit_capturing(
+    c: &mut dyn Context,
+    receiver: Value,
+    event: &str,
+    args: &[Value],
+    rejection: Option<Value>,
+) -> Result<Outcome, Error> {
     if !allowed(c, receiver, event)? {
         return Ok(invalid("events_event_unsupported_or_too_long"));
     }
@@ -164,7 +175,16 @@ pub fn emit(
             c.set_property(entry, "fired", yes)?;
         }
         match c.try_call(callback, receiver, args)? {
-            Ok(_) => {}
+            Ok(value) => {
+                if let Some(rejection) = rejection {
+                    if c.value_kind(value)? == Kind::Object {
+                        let catch = c.get_property(value, "catch")?;
+                        if c.is_callable(catch) {
+                            c.call(catch, value, &[rejection])?;
+                        }
+                    }
+                }
+            }
             Err(exception) => return Ok(Outcome::ThrowValue(exception)),
         }
     }

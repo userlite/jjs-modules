@@ -67,13 +67,13 @@ impl Default for ExpressModule {
                     implementation: "jjs-module-express-v1".into(),
                 },
                 api_version: MODULE_API_VERSION,
-                state_version: 6,
+                state_version: 7,
                 imports: vec!["express".into()],
                 capabilities: vec![],
                 dependencies: vec![ModuleDependency {
                     id: "org.jjs.node-http".into(),
                     version: "0.1.0".into(),
-                    implementation: "jjs-module-node-http-v3".into(),
+                    implementation: "jjs-module-node-http-v4".into(),
                 }],
                 function_keys: (1..=33).collect(),
                 object_kind_keys: vec![],
@@ -1377,6 +1377,13 @@ impl NativeModule for ExpressModule {
                     let receiver = context.undefined();
                     context.call(next, receiver, &[])?;
                     return Ok(return_undefined(context));
+                }
+                let streamed = context.get_property(request, "streamedInput")?;
+                if context.is_truthy(streamed)? {
+                    return Ok(named_throw(
+                        "ExpressJsonStreamingUnsupported",
+                        "express.json streaming middleware is outside the current subset; consume request data/end explicitly",
+                    ));
                 }
                 let raw = context.get_property(request, "body")?;
                 let raw = if context.is_bytes(raw) {
