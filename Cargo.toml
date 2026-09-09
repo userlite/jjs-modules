@@ -3,6 +3,8 @@ members = [
     "crates/jjs-modules",
     "modules/node-http",
     "modules/node-events",
+    "modules/node-url",
+    "modules/node-querystring",
     "modules/node-fs",
     "modules/node-path",
     "modules/express",
@@ -29,5 +31,5 @@ edition = "2021"
 license = "MIT"
 
 [workspace.dependencies]
-jjs = { git = "https://github.com/userlite/jjs.git", rev = "594bd822b3b965ad2e9ca2d921d7c1464fa18ef2", default-features = false }
-jjs-module-api = { git = "https://github.com/userlite/jjs.git", rev = "594bd822b3b965ad2e9ca2d921d7c1464fa18ef2" }
+jjs = { git = "https://github.com/userlite/jjs.git", rev = "546311efd4f42ead71990ff79cd020f147df5115", default-features = false }
+jjs-module-api = { git = "https://github.com/userlite/jjs.git", rev = "546311efd4f42ead71990ff79cd020f147df5115" }
