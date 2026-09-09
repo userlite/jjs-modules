@@ -5,6 +5,7 @@ use jjs_module_api::{
     ModuleContinuation, ModuleError, ModuleFunctionKey, ModuleIdentity, ModuleManifest,
     ModuleObjectKind, NativeModule, ValueHandle, MODULE_API_VERSION,
 };
+use jjs_module_node_events as listeners;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
@@ -25,15 +26,10 @@ const RESPONSE_WRITE_HEAD: ModuleFunctionKey = ModuleFunctionKey(9);
 const SERVER: ModuleObjectKind = ModuleObjectKind(1);
 const REQUEST: ModuleObjectKind = ModuleObjectKind(2);
 const RESPONSE: ModuleObjectKind = ModuleObjectKind(3);
-const HANDLER: u32 = 1;
 const LISTENING: u32 = 2;
-const DATA_HANDLER: u32 = 3;
-const END_HANDLER: u32 = 4;
 const LIFECYCLE: u32 = 5;
 const HEADERS_JSON: u32 = 6;
 const BODY: u32 = 7;
-const CLOSE_HANDLER: u32 = 8;
-const DRAIN_HANDLER: u32 = 9;
 const REQUEST_HANDLE: u32 = 10;
 const CONNECTION_ID: u32 = 11;
 const REQUEST_ID: u32 = 12;
@@ -344,10 +340,10 @@ impl Default for NodeHttpModule {
                 identity: ModuleIdentity {
                     id: "org.jjs.node-http".into(),
                     version: env!("CARGO_PKG_VERSION").into(),
-                    implementation: "jjs-module-node-http-v1".into(),
+                    implementation: "jjs-module-node-http-v2".into(),
                 },
                 api_version: MODULE_API_VERSION,
-                state_version: 2,
+                state_version: 3,
                 imports: vec!["http".into(), "node:http".into()],
                 capabilities: vec![
                     HostCapabilityDescriptor {
@@ -374,6 +370,14 @@ impl Default for NodeHttpModule {
                     RESPONSE_WRITE.0,
                     RESPONSE_ON.0,
                     RESPONSE_WRITE_HEAD.0,
+                    100,
+                    101,
+                    102,
+                    103,
+                    104,
+                    105,
+                    106,
+                    107,
                 ],
                 object_kind_keys: vec![SERVER.0, REQUEST.0, RESPONSE.0],
                 deterministic_resources: vec![],
@@ -576,16 +580,28 @@ impl NativeModule for NodeHttpModule {
         args: &[ValueHandle],
         context: &mut dyn ModuleContext,
     ) -> Result<ModuleCallResult, ModuleError> {
+        if listeners::FUNCTION_KEYS.contains(&key.0) {
+            return listeners::call(context, key, receiver, args);
+        }
         match key {
             CREATE_SERVER => {
-                let Some(handler) = args.first().copied() else {
-                    return Ok(thrown("node_http_create_server_handler_not_callable"));
-                };
-                if !context.is_callable(handler) {
+                if args.len() > 1
+                    || args
+                        .first()
+                        .is_some_and(|handler| !context.is_callable(*handler))
+                {
                     return Ok(thrown("node_http_create_server_handler_not_callable"));
                 }
                 let server = context.module_object(SERVER)?;
-                context.set_private(server, HANDLER, handler)?;
+                listeners::install(context, server, &["request", "listening", "error", "close"])?;
+                if let Some(handler) = args.first() {
+                    let event = context.string("request")?;
+                    let registered =
+                        listeners::call(context, listeners::ON, server, &[event, *handler])?;
+                    if !matches!(registered, ModuleCallResult::Return(_)) {
+                        return Ok(registered);
+                    }
+                }
                 let not_listening = context.bool(false)?;
                 context.set_private(server, LISTENING, not_listening)?;
                 context.set_property(server, "listening", not_listening)?;
@@ -635,25 +651,27 @@ impl NativeModule for NodeHttpModule {
                         context.set_private(receiver, LISTENING, listening)?;
                         context.set_property(receiver, "listening", listening)?;
                         if args.len() == 2 {
-                            context.call(args[1], receiver, &[])?;
+                            let event = context.string("listening")?;
+                            let registered = listeners::call(
+                                context,
+                                listeners::ONCE,
+                                receiver,
+                                &[event, args[1]],
+                            )?;
+                            if !matches!(registered, ModuleCallResult::Return(_)) {
+                                return Ok(registered);
+                            }
+                        }
+                        let emitted = listeners::emit(context, receiver, "listening", &[])?;
+                        if !matches!(emitted, ModuleCallResult::Return(_)) {
+                            return Ok(emitted);
                         }
                         Ok(ModuleCallResult::Return(receiver))
                     }
                     other => Ok(other),
                 }
             }
-            REQUEST_ON => {
-                if args.len() != 2 || !context.is_callable(args[1]) {
-                    return Ok(thrown("node_http_request_on_invalid"));
-                }
-                match context.as_string(args[0])?.as_str() {
-                    "data" => context.set_private(receiver, DATA_HANDLER, args[1])?,
-                    "end" => context.set_private(receiver, END_HANDLER, args[1])?,
-                    "close" => context.set_private(receiver, CLOSE_HANDLER, args[1])?,
-                    _ => return Ok(thrown("node_http_request_event_unsupported")),
-                }
-                Ok(ModuleCallResult::Return(receiver))
-            }
+            REQUEST_ON | RESPONSE_ON => listeners::call(context, listeners::ON, receiver, args),
             RESPONSE_SET_HEADER => {
                 if args.len() != 2 {
                     return Ok(thrown("node_http_set_header_arity_invalid"));
@@ -818,16 +836,6 @@ impl NativeModule for NodeHttpModule {
                 }
                 stream_request(context, receiver, "write", vec![args[0]])
             }
-            RESPONSE_ON => {
-                if args.len() != 2 || !context.is_callable(args[1]) {
-                    return Ok(thrown("node_http_response_on_invalid"));
-                }
-                if context.as_string(args[0])? != "drain" {
-                    return Ok(thrown("node_http_response_event_unsupported"));
-                }
-                context.set_private(receiver, DRAIN_HANDLER, args[1])?;
-                Ok(ModuleCallResult::Return(receiver))
-            }
             _ => Err(ModuleError::ContractViolation(format!(
                 "unknown node:http function key {}",
                 key.0
@@ -874,9 +882,9 @@ impl NativeModule for NodeHttpModule {
                 ));
             }
             validate_stream_event(context, target, payload)?;
-            let handler = context.get_private(target, DRAIN_HANDLER)?;
-            if context.is_callable(handler) {
-                context.call(handler, target, &[])?;
+            let emitted = listeners::emit(context, target, "drain", &[])?;
+            if !matches!(emitted, ModuleCallResult::Return(_)) {
+                return Ok(emitted);
             }
             return Ok(ModuleCallResult::Return(target));
         }
@@ -892,13 +900,14 @@ impl NativeModule for NodeHttpModule {
             context.set_private(target, CLOSE_DELIVERED, yes)?;
             set_response_lifecycle(context, target, HttpResponseLifecycle::Closed)?;
             let request = context.get_private(target, REQUEST_HANDLE)?;
-            let handler = context.get_private(request, CLOSE_HANDLER)?;
-            if context.is_callable(handler) {
-                context.call(handler, request, &[])?;
+            let emitted = listeners::emit(context, request, "close", &[])?;
+            if !matches!(emitted, ModuleCallResult::Return(_)) {
+                return Ok(emitted);
             }
-            let undefined = context.undefined();
-            context.set_private(request, CLOSE_HANDLER, undefined)?;
-            context.set_private(target, DRAIN_HANDLER, undefined)?;
+            let emitted = listeners::emit(context, target, "close", &[])?;
+            if !matches!(emitted, ModuleCallResult::Return(_)) {
+                return Ok(emitted);
+            }
             return Ok(ModuleCallResult::Return(target));
         }
         if event != HTTP_REQUEST_EVENT {
@@ -906,16 +915,15 @@ impl NativeModule for NodeHttpModule {
                 "unsupported node:http event".into(),
             ));
         }
-        let handler = context.get_private(target, HANDLER)?;
         let request = context.module_object(REQUEST)?;
         for name in ["method", "url", "headers", "client", "body"] {
             let value = context.get_property(payload, name)?;
             context.set_property(request, name, value)?;
         }
-        let on = context.function(REQUEST_ON)?;
-        context.set_property(request, "on", on)?;
+        listeners::install(context, request, &["data", "end", "close", "error"])?;
 
         let response = context.module_object(RESPONSE)?;
+        listeners::install(context, response, &["drain", "close", "error"])?;
         let status = context.number(200.0)?;
         context.set_property(response, "statusCode", status)?;
         let set_header = context.function(RESPONSE_SET_HEADER)?;
@@ -927,7 +935,6 @@ impl NativeModule for NodeHttpModule {
         for (name, key) in [
             ("flushHeaders", RESPONSE_FLUSH_HEADERS),
             ("write", RESPONSE_WRITE),
-            ("on", RESPONSE_ON),
         ] {
             let function = context.function(key)?;
             context.set_property(response, name, function)?;
@@ -952,15 +959,18 @@ impl NativeModule for NodeHttpModule {
         let close_delivered = context.bool(false)?;
         context.set_private(response, CLOSE_DELIVERED, close_delivered)?;
 
-        context.call(handler, target, &[request, response])?;
-        let data_handler = context.get_private(request, DATA_HANDLER)?;
-        if context.is_callable(data_handler) {
-            let body = context.get_property(payload, "body")?;
-            context.call(data_handler, request, &[body])?;
+        let emitted = listeners::emit(context, target, "request", &[request, response])?;
+        if !matches!(emitted, ModuleCallResult::Return(_)) {
+            return Ok(emitted);
         }
-        let end_handler = context.get_private(request, END_HANDLER)?;
-        if context.is_callable(end_handler) {
-            context.call(end_handler, request, &[])?;
+        let body = context.get_property(payload, "body")?;
+        let emitted = listeners::emit(context, request, "data", &[body])?;
+        if !matches!(emitted, ModuleCallResult::Return(_)) {
+            return Ok(emitted);
+        }
+        let emitted = listeners::emit(context, request, "end", &[])?;
+        if !matches!(emitted, ModuleCallResult::Return(_)) {
+            return Ok(emitted);
         }
 
         Ok(ModuleCallResult::Return(response))

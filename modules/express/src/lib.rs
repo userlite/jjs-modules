@@ -73,7 +73,7 @@ impl Default for ExpressModule {
                 dependencies: vec![ModuleDependency {
                     id: "org.jjs.node-http".into(),
                     version: "0.1.0".into(),
-                    implementation: "jjs-module-node-http-v1".into(),
+                    implementation: "jjs-module-node-http-v2".into(),
                 }],
                 function_keys: (1..=33).collect(),
                 object_kind_keys: vec![],

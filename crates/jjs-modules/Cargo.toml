@@ -6,6 +6,7 @@ license.workspace = true
 description = "Standard environment-owned compiled module profile for JJS"
 
 [dependencies]
+jjs-module-node-events = { path = "../../modules/node-events" }
 jjs-module-api.workspace = true
 jjs-module-better-sqlite3 = { path = "../../modules/better-sqlite3" }
 jjs-module-crypto = { path = "../../modules/jjs-crypto" }
