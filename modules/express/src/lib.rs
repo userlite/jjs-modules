@@ -73,7 +73,7 @@ impl Default for ExpressModule {
                 dependencies: vec![ModuleDependency {
                     id: "org.jjs.node-http".into(),
                     version: "0.1.0".into(),
-                    implementation: "jjs-module-node-http-v2".into(),
+                    implementation: "jjs-module-node-http-v3".into(),
                 }],
                 function_keys: (1..=33).collect(),
                 object_kind_keys: vec![],
@@ -1379,14 +1379,12 @@ impl NativeModule for ExpressModule {
                     return Ok(return_undefined(context));
                 }
                 let raw = context.get_property(request, "body")?;
-                let raw = match context.as_string(raw) {
-                    Ok(raw) => raw,
-                    Err(_) => {
-                        return Ok(named_throw(
-                            "ExpressJsonBodyError",
-                            "express.json request body must be raw text",
-                        ));
-                    }
+                let raw = if context.is_bytes(raw) {
+                    String::from_utf8(context.read_bytes(raw)?).map_err(|_| {
+                        ModuleError::ContractViolation("express.json requires valid UTF-8".into())
+                    })?
+                } else {
+                    context.as_string(raw)?
                 };
                 if raw.is_empty() {
                     let empty = context.object()?;

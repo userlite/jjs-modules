@@ -5,6 +5,7 @@ use jjs_module_api::{
     ModuleContinuation, ModuleError, ModuleFunctionKey, ModuleIdentity, ModuleManifest,
     ModuleObjectKind, NativeModule, ValueHandle, MODULE_API_VERSION,
 };
+use jjs_module_node_buffer as buffer;
 use jjs_module_node_events as listeners;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
@@ -13,7 +14,7 @@ pub const HTTP_REQUEST_EVENT: u32 = 1;
 pub const HTTP_RESPONSE_EVENT: u32 = 2;
 pub const HTTP_DRAIN_EVENT: u32 = 3;
 pub const HTTP_CLOSE_EVENT: u32 = 4;
-pub const HTTP_STREAM_CONTRACT_VERSION: u16 = 1;
+pub const HTTP_STREAM_CONTRACT_VERSION: u16 = 2;
 const CREATE_SERVER: ModuleFunctionKey = ModuleFunctionKey(1);
 const SERVER_LISTEN: ModuleFunctionKey = ModuleFunctionKey(2);
 const REQUEST_ON: ModuleFunctionKey = ModuleFunctionKey(3);
@@ -23,6 +24,10 @@ const RESPONSE_FLUSH_HEADERS: ModuleFunctionKey = ModuleFunctionKey(6);
 const RESPONSE_WRITE: ModuleFunctionKey = ModuleFunctionKey(7);
 const RESPONSE_ON: ModuleFunctionKey = ModuleFunctionKey(8);
 const RESPONSE_WRITE_HEAD: ModuleFunctionKey = ModuleFunctionKey(9);
+const REQUEST_SET_ENCODING: ModuleFunctionKey = ModuleFunctionKey(10);
+const COMMITTED_STATUS: u32 = 16;
+const TEXT_ENCODING: u32 = 17;
+const DATA_STARTED: u32 = 18;
 const SERVER: ModuleObjectKind = ModuleObjectKind(1);
 const REQUEST: ModuleObjectKind = ModuleObjectKind(2);
 const RESPONSE: ModuleObjectKind = ModuleObjectKind(3);
@@ -59,7 +64,7 @@ impl HttpResponseLifecycle {
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
-pub enum HttpStreamEventV1 {
+pub enum HttpStreamEventV2 {
     Drain {
         version: u16,
         connection_id: String,
@@ -77,27 +82,27 @@ pub enum HttpStreamEventV1 {
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
-pub enum HttpStreamActionV1 {
+pub enum HttpStreamActionV2 {
     Start {
         version: u16,
         connection_id: String,
         request_id: String,
         status: u16,
-        headers: BTreeMap<String, String>,
+        headers: Vec<(String, String)>,
         sequence: u64,
     },
     Write {
         version: u16,
         connection_id: String,
         request_id: String,
-        utf8_chunk: String,
+        bytes: Vec<u8>,
         sequence: u64,
     },
     End {
         version: u16,
         connection_id: String,
         request_id: String,
-        optional_utf8_chunk: Option<String>,
+        optional_bytes: Option<Vec<u8>>,
         sequence: u64,
     },
 }
@@ -117,23 +122,23 @@ pub enum HttpStreamContractError {
 /// Deterministic logical state for one host-owned streaming HTTP response.
 /// It contains ids and ordered actions, never a socket or other host handle.
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub struct HttpResponseStreamV1 {
+pub struct HttpResponseStreamV2 {
     connection_id: String,
     request_id: String,
     status: u16,
-    headers: BTreeMap<String, String>,
+    headers: Vec<(String, String)>,
     lifecycle: HttpResponseLifecycle,
     next_sequence: u64,
-    actions: Vec<HttpStreamActionV1>,
+    actions: Vec<HttpStreamActionV2>,
 }
 
-impl HttpResponseStreamV1 {
+impl HttpResponseStreamV2 {
     pub fn new(connection_id: impl Into<String>, request_id: impl Into<String>) -> Self {
         Self {
             connection_id: connection_id.into(),
             request_id: request_id.into(),
             status: 200,
-            headers: BTreeMap::new(),
+            headers: Vec::new(),
             lifecycle: HttpResponseLifecycle::Buffered,
             next_sequence: 1,
             actions: Vec::new(),
@@ -144,7 +149,7 @@ impl HttpResponseStreamV1 {
         self.lifecycle
     }
 
-    pub fn actions(&self) -> &[HttpStreamActionV1] {
+    pub fn actions(&self) -> &[HttpStreamActionV2] {
         &self.actions
     }
 
@@ -160,8 +165,9 @@ impl HttpResponseStreamV1 {
         value: impl Into<String>,
     ) -> Result<(), HttpStreamContractError> {
         self.require_buffered()?;
-        self.headers
-            .insert(name.into().to_ascii_lowercase(), value.into());
+        let name = name.into().to_ascii_lowercase();
+        self.headers.retain(|(n, _)| n != &name);
+        self.headers.push((name, value.into()));
         Ok(())
     }
 
@@ -183,11 +189,11 @@ impl HttpResponseStreamV1 {
             return Err(HttpStreamContractError::StreamClosed);
         }
         let sequence = self.take_sequence();
-        self.actions.push(HttpStreamActionV1::Write {
+        self.actions.push(HttpStreamActionV2::Write {
             version: HTTP_STREAM_CONTRACT_VERSION,
             connection_id: self.connection_id.clone(),
             request_id: self.request_id.clone(),
-            utf8_chunk: chunk.into(),
+            bytes: chunk.into().into_bytes(),
             sequence,
         });
         Ok(())
@@ -203,11 +209,11 @@ impl HttpResponseStreamV1 {
             }
             HttpResponseLifecycle::Streaming => {
                 let sequence = self.take_sequence();
-                self.actions.push(HttpStreamActionV1::End {
+                self.actions.push(HttpStreamActionV2::End {
                     version: HTTP_STREAM_CONTRACT_VERSION,
                     connection_id: self.connection_id.clone(),
                     request_id: self.request_id.clone(),
-                    optional_utf8_chunk: optional_chunk,
+                    optional_bytes: optional_chunk.map(String::into_bytes),
                     sequence,
                 });
                 self.lifecycle = HttpResponseLifecycle::Ended;
@@ -221,16 +227,16 @@ impl HttpResponseStreamV1 {
 
     pub fn deliver_event(
         &mut self,
-        event: HttpStreamEventV1,
+        event: HttpStreamEventV2,
     ) -> Result<(), HttpStreamContractError> {
         let (version, connection_id, request_id, sequence, close) = match event {
-            HttpStreamEventV1::Drain {
+            HttpStreamEventV2::Drain {
                 version,
                 connection_id,
                 request_id,
                 sequence,
             } => (version, connection_id, request_id, sequence, false),
-            HttpStreamEventV1::Close {
+            HttpStreamEventV2::Close {
                 version,
                 connection_id,
                 request_id,
@@ -281,7 +287,7 @@ impl HttpResponseStreamV1 {
     fn start(&mut self) -> Result<(), HttpStreamContractError> {
         self.require_buffered()?;
         let sequence = self.take_sequence();
-        self.actions.push(HttpStreamActionV1::Start {
+        self.actions.push(HttpStreamActionV2::Start {
             version: HTTP_STREAM_CONTRACT_VERSION,
             connection_id: self.connection_id.clone(),
             request_id: self.request_id.clone(),
@@ -304,8 +310,8 @@ impl HttpResponseStreamV1 {
 pub struct HttpRequest {
     pub method: String,
     pub url: String,
-    pub headers: BTreeMap<String, String>,
-    pub body: String,
+    pub headers: Vec<(String, String)>,
+    pub body: Vec<u8>,
     pub client: HttpClient,
     pub received_at_ms: u64,
 }
@@ -319,7 +325,7 @@ pub struct HttpClient {
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub struct HttpResponse {
     pub status: u16,
-    pub headers: BTreeMap<String, String>,
+    pub headers: Vec<(String, String)>,
     pub body: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub body_bytes: Option<Vec<u8>>,
@@ -340,10 +346,10 @@ impl Default for NodeHttpModule {
                 identity: ModuleIdentity {
                     id: "org.jjs.node-http".into(),
                     version: env!("CARGO_PKG_VERSION").into(),
-                    implementation: "jjs-module-node-http-v2".into(),
+                    implementation: "jjs-module-node-http-v3".into(),
                 },
                 api_version: MODULE_API_VERSION,
-                state_version: 3,
+                state_version: 4,
                 imports: vec!["http".into(), "node:http".into()],
                 capabilities: vec![
                     HostCapabilityDescriptor {
@@ -354,12 +360,16 @@ impl Default for NodeHttpModule {
                     },
                     HostCapabilityDescriptor {
                         id: "jjs:http/stream".into(),
-                        contract_version: 1,
+                        contract_version: 2,
                         completion: CompletionMode::Sync,
-                        schema: "jjs.http.stream.v1".into(),
+                        schema: "jjs.http.stream.v2".into(),
                     },
                 ],
-                dependencies: vec![],
+                dependencies: vec![jjs_module_api::ModuleDependency {
+                    id: "org.jjs.node-buffer".into(),
+                    version: "0.1.0".into(),
+                    implementation: "jjs-module-node-buffer-v1".into(),
+                }],
                 function_keys: vec![
                     CREATE_SERVER.0,
                     SERVER_LISTEN.0,
@@ -370,6 +380,7 @@ impl Default for NodeHttpModule {
                     RESPONSE_WRITE.0,
                     RESPONSE_ON.0,
                     RESPONSE_WRITE_HEAD.0,
+                    REQUEST_SET_ENCODING.0,
                     100,
                     101,
                     102,
@@ -446,6 +457,188 @@ fn stream_request(
     Ok(result)
 }
 
+type Headers = Vec<(String, String)>;
+fn invalid(s: &str) -> ModuleError {
+    ModuleError::ContractViolation(s.into())
+}
+fn read_headers(c: &mut dyn ModuleContext, r: ValueHandle) -> Result<Headers, ModuleError> {
+    let v = c.get_private(r, HEADERS_JSON)?;
+    serde_json::from_str(&c.as_string(v)?).map_err(|_| invalid("node_http_headers_invalid"))
+}
+fn validate_headers(headers: &Headers) -> Result<(), ModuleError> {
+    if headers.len() > 256
+        || headers
+            .iter()
+            .map(|(n, v)| n.len() + v.len())
+            .sum::<usize>()
+            > 65536
+    {
+        return Err(invalid("node_http_headers_limit"));
+    }
+    for (n, v) in headers {
+        if n.is_empty()
+            || n.len() > 256
+            || !n
+                .bytes()
+                .all(|b| b.is_ascii_alphanumeric() || b"!#$%&'*+-.^_`|~".contains(&b))
+        {
+            return Err(invalid("node_http_header_name_invalid"));
+        }
+        if v.len() > 16384 || !v.bytes().all(|b| b == b'\t' || (32..=126).contains(&b)) {
+            return Err(invalid("node_http_header_value_invalid"));
+        }
+    }
+    Ok(())
+}
+fn save_headers(c: &mut dyn ModuleContext, r: ValueHandle, h: &Headers) -> Result<(), ModuleError> {
+    validate_headers(h)?;
+    let v =
+        c.string(&serde_json::to_string(h).map_err(|_| invalid("node_http_headers_invalid"))?)?;
+    c.set_private(r, HEADERS_JSON, v)
+}
+fn replace_header(
+    c: &mut dyn ModuleContext,
+    h: &mut Headers,
+    n: &str,
+    v: ValueHandle,
+) -> Result<(), ModuleError> {
+    let mut values = Vec::new();
+    if c.value_kind(v)? == jjs_module_api::ModuleValueKind::Array {
+        for i in 0..c.array_len(v)? {
+            let v = c.array_get(v, i)?;
+            values.push(
+                c.as_string(v)
+                    .map_err(|_| invalid("node_http_header_value_invalid"))?,
+            );
+        }
+        if values.is_empty() {
+            return Err(invalid("node_http_header_values_empty"));
+        }
+    } else {
+        values.push(
+            c.as_string(v)
+                .map_err(|_| invalid("node_http_header_value_invalid"))?,
+        );
+    }
+    h.retain(|(name, _)| !name.eq_ignore_ascii_case(n));
+    h.extend(values.into_iter().map(|v| (n.to_ascii_lowercase(), v)));
+    validate_headers(h)
+}
+fn committed(c: &mut dyn ModuleContext, r: ValueHandle) -> Result<bool, ModuleError> {
+    let v = c.get_private(r, COMMITTED_STATUS)?;
+    Ok(c.value_kind(v)? != jjs_module_api::ModuleValueKind::Undefined)
+}
+fn commit(c: &mut dyn ModuleContext, r: ValueHandle) -> Result<(), ModuleError> {
+    if committed(c, r)? {
+        return Ok(());
+    }
+    let status = c.get_property(r, "statusCode")?;
+    let n = c.as_number(status)?;
+    if !(200.0..=599.0).contains(&n) || n.fract() != 0.0 {
+        return Err(invalid("node_http_final_status_unsupported"));
+    }
+    let mut h = read_headers(c, r)?;
+    if n == 204.0 || n == 304.0 {
+        h.retain(|(n, _)| n != "content-length" && n != "transfer-encoding");
+    }
+    save_headers(c, r, &h)?;
+    c.set_private(r, COMMITTED_STATUS, status)?;
+    let yes = c.bool(true)?;
+    c.set_property(r, "headersSent", yes)
+}
+fn body_allowed(c: &mut dyn ModuleContext, r: ValueHandle) -> Result<bool, ModuleError> {
+    let request = c.get_private(r, REQUEST_HANDLE)?;
+    let method = c.get_property(request, "method")?;
+    let status = c.get_private(r, COMMITTED_STATUS)?;
+    let status = c.as_number(status)?;
+    Ok(c.as_string(method)? != "HEAD" && status != 204.0 && status != 304.0)
+}
+fn chunk_bytes(c: &mut dyn ModuleContext, v: ValueHandle) -> Result<Vec<u8>, ModuleError> {
+    if c.is_bytes(v) {
+        c.read_bytes(v)
+    } else if c.value_kind(v)? == jjs_module_api::ModuleValueKind::String {
+        Ok(c.as_string(v)?.into_bytes())
+    } else {
+        Err(invalid("node_http_chunk_requires_string_or_buffer"))
+    }
+}
+fn stream_chunk(
+    c: &mut dyn ModuleContext,
+    r: ValueHandle,
+    v: ValueHandle,
+) -> Result<ValueHandle, ModuleError> {
+    let bytes = chunk_bytes(c, v)?;
+    let bytes = if body_allowed(c, r)? {
+        bytes.as_slice()
+    } else {
+        &[]
+    };
+    c.string(&buffer::decode(bytes, "base64")?)
+}
+fn request_headers(
+    c: &mut dyn ModuleContext,
+    r: ValueHandle,
+    h: &Headers,
+) -> Result<(), ModuleError> {
+    validate_headers(h)?;
+    let raw = c.array()?;
+    let normalized = c.object()?;
+    let distinct = c.object()?;
+    let mut groups: BTreeMap<String, Vec<String>> = BTreeMap::new();
+    for (n, v) in h {
+        let name = c.string(n)?;
+        c.array_push(raw, name)?;
+        let value = c.string(v)?;
+        c.array_push(raw, value)?;
+        groups
+            .entry(n.to_ascii_lowercase())
+            .or_default()
+            .push(v.clone());
+    }
+    for (n, vs) in groups {
+        let all = c.array()?;
+        for v in &vs {
+            let v = c.string(v)?;
+            c.array_push(all, v)?;
+        }
+        c.set_property(distinct, &n, all)?;
+        let value = if n == "set-cookie" {
+            all
+        } else {
+            let singleton = matches!(
+                n.as_str(),
+                "age"
+                    | "authorization"
+                    | "content-length"
+                    | "content-type"
+                    | "etag"
+                    | "expires"
+                    | "from"
+                    | "host"
+                    | "if-modified-since"
+                    | "if-unmodified-since"
+                    | "last-modified"
+                    | "location"
+                    | "max-forwards"
+                    | "proxy-authorization"
+                    | "referer"
+                    | "retry-after"
+                    | "server"
+                    | "user-agent"
+            );
+            c.string(&if singleton {
+                vs[0].clone()
+            } else {
+                vs.join(if n == "cookie" { "; " } else { ", " })
+            })?
+        };
+        c.set_property(normalized, &n, value)?;
+    }
+    c.set_property(r, "rawHeaders", raw)?;
+    c.set_property(r, "headersDistinct", distinct)?;
+    c.set_property(r, "headers", normalized)
+}
+
 fn start_stream(
     context: &mut dyn ModuleContext,
     response: ValueHandle,
@@ -455,7 +648,8 @@ fn start_stream(
         "streaming" => return Ok(thrown("node_http_response_already_streaming")),
         _ => return Ok(thrown("node_http_response_stream_closed")),
     }
-    let status = context.get_property(response, "statusCode")?;
+    commit(context, response)?;
+    let status = context.get_private(response, COMMITTED_STATUS)?;
     let headers = context.get_private(response, HEADERS_JSON)?;
     let result = stream_request(context, response, "start", vec![status, headers])?;
     if matches!(result, ModuleCallResult::Return(_)) {
@@ -514,37 +708,26 @@ fn encode_response(
             "node_http_response_not_ended".into(),
         ));
     }
-    let status = context.get_property(response, "statusCode")?;
+    commit(context, response)?;
+    let status = context.get_private(response, COMMITTED_STATUS)?;
     let status = context.as_number(status)? as u16;
     let headers = context.get_private(response, HEADERS_JSON)?;
     let headers = context.as_string(headers)?;
-    let headers: BTreeMap<String, String> = serde_json::from_str(&headers)
+    let headers: Headers = serde_json::from_str(&headers)
         .map_err(|_| ModuleError::ContractViolation("node_http_response_headers_invalid".into()))?;
     let body = context.get_private(response, BODY)?;
     let body = context.as_string(body)?;
     let body_bytes = context.get_private(response, BODY_BYTES)?;
-    let body_bytes = match context.value_kind(body_bytes)? {
-        jjs_module_api::ModuleValueKind::Undefined => None,
-        jjs_module_api::ModuleValueKind::Array => {
-            let length = context.array_len(body_bytes)?;
-            let mut bytes = Vec::with_capacity(length);
-            for index in 0..length {
-                let value = context.array_get(body_bytes, index)?;
-                let value = context.as_number(value)?;
-                if !value.is_finite() || value.fract() != 0.0 || !(0.0..=255.0).contains(&value) {
-                    return Err(ModuleError::ContractViolation(
-                        "node_http_response_byte_invalid".into(),
-                    ));
-                }
-                bytes.push(value as u8);
-            }
-            Some(bytes)
-        }
-        _ => {
-            return Err(ModuleError::ContractViolation(
-                "node_http_response_bytes_invalid".into(),
-            ));
-        }
+    let body_bytes =
+        if context.value_kind(body_bytes)? == jjs_module_api::ModuleValueKind::Undefined {
+            None
+        } else {
+            Some(context.read_bytes(body_bytes)?)
+        };
+    let (body, body_bytes) = if body_allowed(context, response)? {
+        (body, body_bytes)
+    } else {
+        (String::new(), None)
     };
     let encoded = serde_json::to_string(&HttpResponse {
         status,
@@ -583,7 +766,7 @@ impl NativeModule for NodeHttpModule {
         if listeners::FUNCTION_KEYS.contains(&key.0) {
             return listeners::call(context, key, receiver, args);
         }
-        match key {
+        let result = (|| match key {
             CREATE_SERVER => {
                 if args.len() > 1
                     || args
@@ -672,39 +855,46 @@ impl NativeModule for NodeHttpModule {
                 }
             }
             REQUEST_ON | RESPONSE_ON => listeners::call(context, listeners::ON, receiver, args),
+            REQUEST_SET_ENCODING => {
+                if args.len() != 1 {
+                    return Ok(thrown("node_http_set_encoding_arity_invalid"));
+                }
+                let started = context.get_private(receiver, DATA_STARTED)?;
+                if context.as_bool(started)? {
+                    return Ok(thrown("node_http_set_encoding_after_data_unsupported"));
+                }
+                let enc = buffer::encoding(&context.as_string(args[0])?)?;
+                if !matches!(enc, "utf8" | "latin1" | "ascii") {
+                    return Ok(thrown("node_http_stream_encoding_unsupported"));
+                }
+                let enc = context.string(enc)?;
+                context.set_private(receiver, TEXT_ENCODING, enc)?;
+                Ok(ModuleCallResult::Return(receiver))
+            }
             RESPONSE_SET_HEADER => {
                 if args.len() != 2 {
                     return Ok(thrown("node_http_set_header_arity_invalid"));
                 }
-                let lifecycle = context.get_private(receiver, LIFECYCLE)?;
-                if context.as_string(lifecycle)? != HttpResponseLifecycle::Buffered.as_private() {
+                if committed(context, receiver)? {
                     return Ok(thrown("node_http_response_headers_committed"));
                 }
-                let name = context.as_string(args[0])?.to_ascii_lowercase();
-                let value = context.as_string(args[1])?;
-                let raw = context.get_private(receiver, HEADERS_JSON)?;
-                let raw = context.as_string(raw)?;
-                let mut headers: BTreeMap<String, String> =
-                    serde_json::from_str(&raw).map_err(|_| {
-                        ModuleError::ContractViolation("node_http_response_headers_invalid".into())
-                    })?;
-                headers.insert(name, value);
-                let raw = serde_json::to_string(&headers).map_err(|_| {
-                    ModuleError::ContractViolation("node_http_response_headers_invalid".into())
-                })?;
-                let raw = context.string(&raw)?;
-                context.set_private(receiver, HEADERS_JSON, raw)?;
+                let name = context
+                    .as_string(args[0])
+                    .map_err(|_| invalid("node_http_header_name_invalid"))?;
+                let mut headers = read_headers(context, receiver)?;
+                replace_header(context, &mut headers, &name, args[1])?;
+                save_headers(context, receiver, &headers)?;
                 Ok(ModuleCallResult::Return(receiver))
             }
             RESPONSE_WRITE_HEAD => {
                 if args.is_empty() || args.len() > 3 {
                     return Ok(thrown("node_http_write_head_arity_invalid"));
                 }
-                if response_lifecycle(context, receiver)? != "buffered" {
+                if committed(context, receiver)? {
                     return Ok(thrown("node_http_response_headers_committed"));
                 }
                 let status = match context.as_number(args[0]) {
-                    Ok(value) if (100.0..=999.0).contains(&value) && value.fract() == 0.0 => value,
+                    Ok(value) if (200.0..=599.0).contains(&value) && value.fract() == 0.0 => value,
                     _ => return Ok(thrown("node_http_write_head_status_invalid")),
                 };
                 let headers = match args.len() {
@@ -724,7 +914,7 @@ impl NativeModule for NodeHttpModule {
                 };
                 let encoded_headers = context.get_private(receiver, HEADERS_JSON)?;
                 let encoded_headers = context.as_string(encoded_headers)?;
-                let mut encoded_headers: BTreeMap<String, String> =
+                let mut encoded_headers: Headers =
                     serde_json::from_str(&encoded_headers).map_err(|_| {
                         ModuleError::ContractViolation("node_http_response_headers_invalid".into())
                     })?;
@@ -736,12 +926,7 @@ impl NativeModule for NodeHttpModule {
                     })?;
                     for name in names {
                         let value = context.get_property(headers, &name)?;
-                        let value = context.as_string(value).map_err(|_| {
-                            ModuleError::ContractViolation(
-                                "node_http_write_head_header_value_invalid".into(),
-                            )
-                        })?;
-                        encoded_headers.insert(name.to_ascii_lowercase(), value);
+                        replace_header(context, &mut encoded_headers, &name, value)?;
                     }
                 }
                 let status = context.number(status)?;
@@ -751,43 +936,31 @@ impl NativeModule for NodeHttpModule {
                 })?;
                 let encoded_headers = context.string(&encoded_headers)?;
                 context.set_private(receiver, HEADERS_JSON, encoded_headers)?;
+                commit(context, receiver)?;
                 Ok(ModuleCallResult::Return(receiver))
             }
             RESPONSE_END => {
                 if args.len() > 1 {
                     return Ok(thrown("node_http_response_end_arity_invalid"));
                 }
+                let bytes = if let Some(v) = args.first() {
+                    Some(chunk_bytes(context, *v)?)
+                } else {
+                    None
+                };
                 match response_lifecycle(context, receiver)?.as_str() {
                     "buffered" => {
-                        if let Some(value) = args.first() {
-                            match context.value_kind(*value)? {
-                                jjs_module_api::ModuleValueKind::String => {
-                                    let body = context.as_string(*value)?;
-                                    let body = context.string(&body)?;
-                                    context.set_private(receiver, BODY, body)?;
-                                }
-                                jjs_module_api::ModuleValueKind::Array => {
-                                    context.set_private(receiver, BODY_BYTES, *value)?;
-                                }
-                                _ => {
-                                    return Ok(thrown(
-                                        "node_http_response_chunk_not_string_or_bytes",
-                                    ));
-                                }
-                            }
+                        commit(context, receiver)?;
+                        if let Some(bytes) = bytes {
+                            let body = buffer::from_bytes(context, &bytes)?;
+                            context.set_private(receiver, BODY_BYTES, body)?;
                         }
                         set_response_lifecycle(context, receiver, HttpResponseLifecycle::Ended)?;
-                        let undefined = context.undefined();
-                        Ok(ModuleCallResult::Return(undefined))
+                        Ok(ModuleCallResult::Return(receiver))
                     }
                     "streaming" => {
-                        let chunk = if let Some(value) = args.first() {
-                            if context.value_kind(*value)?
-                                != jjs_module_api::ModuleValueKind::String
-                            {
-                                return Ok(thrown("node_http_response_chunk_not_string"));
-                            }
-                            *value
+                        let chunk = if let Some(v) = args.first() {
+                            stream_chunk(context, receiver, *v)?
                         } else {
                             context.undefined()
                         };
@@ -798,11 +971,8 @@ impl NativeModule for NodeHttpModule {
                                 receiver,
                                 HttpResponseLifecycle::Ended,
                             )?;
-                            let undefined = context.undefined();
-                            Ok(ModuleCallResult::Return(undefined))
-                        } else {
-                            Ok(result)
                         }
+                        Ok(result)
                     }
                     _ => Ok(thrown("node_http_response_already_ended")),
                 }
@@ -820,11 +990,10 @@ impl NativeModule for NodeHttpModule {
                 }
             }
             RESPONSE_WRITE => {
-                if args.len() != 1
-                    || context.value_kind(args[0])? != jjs_module_api::ModuleValueKind::String
-                {
-                    return Ok(thrown("node_http_response_chunk_not_string"));
+                if args.len() != 1 {
+                    return Ok(thrown("node_http_write_arity_invalid"));
                 }
+                chunk_bytes(context, args[0])?;
                 if response_lifecycle(context, receiver)? == "buffered" {
                     let started = start_stream(context, receiver)?;
                     if !matches!(started, ModuleCallResult::Return(_)) {
@@ -834,12 +1003,25 @@ impl NativeModule for NodeHttpModule {
                 if response_lifecycle(context, receiver)? != "streaming" {
                     return Ok(thrown("node_http_response_stream_closed"));
                 }
-                stream_request(context, receiver, "write", vec![args[0]])
+                let chunk = stream_chunk(context, receiver, args[0])?;
+                stream_request(context, receiver, "write", vec![chunk])
             }
             _ => Err(ModuleError::ContractViolation(format!(
                 "unknown node:http function key {}",
                 key.0
             ))),
+        })();
+        match result {
+            Err(ModuleError::ContractViolation(message))
+                if message.starts_with("node_http_header_")
+                    || message == "node_http_headers_limit"
+                    || message == "node_http_final_status_unsupported"
+                    || message == "node_http_chunk_requires_string_or_buffer"
+                    || message.starts_with("buffer_encoding_") =>
+            {
+                Ok(thrown(&message))
+            }
+            other => other,
         }
     }
 
@@ -916,10 +1098,24 @@ impl NativeModule for NodeHttpModule {
             ));
         }
         let request = context.module_object(REQUEST)?;
-        for name in ["method", "url", "headers", "client", "body"] {
+        for name in ["method", "url", "client"] {
             let value = context.get_property(payload, name)?;
             context.set_property(request, name, value)?;
         }
+        let raw = context.get_property(payload, "headersJson")?;
+        let headers: Headers = serde_json::from_str(&context.as_string(raw)?)
+            .map_err(|_| invalid("node_http_request_headers_invalid"))?;
+        request_headers(context, request, &headers)?;
+        let raw = context.get_property(payload, "bodyBase64")?;
+        let bytes = buffer::encode(&context.as_string(raw)?, "base64")?;
+        let body = buffer::from_bytes(context, &bytes)?;
+        context.set_property(request, "body", body)?;
+        let encoding = context.undefined();
+        context.set_private(request, TEXT_ENCODING, encoding)?;
+        let started = context.bool(false)?;
+        context.set_private(request, DATA_STARTED, started)?;
+        let setter = context.function(REQUEST_SET_ENCODING)?;
+        context.set_property(request, "setEncoding", setter)?;
         listeners::install(context, request, &["data", "end", "close", "error"])?;
 
         let response = context.module_object(RESPONSE)?;
@@ -943,7 +1139,9 @@ impl NativeModule for NodeHttpModule {
         context.set_property(response, "headersSent", no)?;
         let buffered = context.string(HttpResponseLifecycle::Buffered.as_private())?;
         context.set_private(response, LIFECYCLE, buffered)?;
-        let empty_headers = context.string("{}")?;
+        let empty_headers = context.string("[]")?;
+        let uncommitted = context.undefined();
+        context.set_private(response, COMMITTED_STATUS, uncommitted)?;
         let empty_body = context.string("")?;
         context.set_private(response, HEADERS_JSON, empty_headers)?;
         context.set_private(response, BODY, empty_body)?;
@@ -963,10 +1161,35 @@ impl NativeModule for NodeHttpModule {
         if !matches!(emitted, ModuleCallResult::Return(_)) {
             return Ok(emitted);
         }
-        let body = context.get_property(payload, "body")?;
-        let emitted = listeners::emit(context, request, "data", &[body])?;
-        if !matches!(emitted, ModuleCallResult::Return(_)) {
-            return Ok(emitted);
+        let enc = context.get_private(request, TEXT_ENCODING)?;
+        let encoding = if context.value_kind(enc)? == jjs_module_api::ModuleValueKind::Undefined {
+            None
+        } else {
+            Some(context.as_string(enc)?)
+        };
+        let started = context.bool(true)?;
+        context.set_private(request, DATA_STARTED, started)?;
+        let mut pending = Vec::new();
+        // Buffered input is sliced deterministically; transport streaming belongs to iteration 5.
+        let count = bytes.len().div_ceil(16384);
+        for (i, chunk) in bytes.chunks(16384).enumerate() {
+            let value = if let Some(enc) = &encoding {
+                let text = if enc == "utf8" {
+                    buffer::decode_utf8(&mut pending, chunk, i + 1 == count)?
+                } else {
+                    buffer::decode(chunk, enc)?
+                };
+                if text.is_empty() {
+                    continue;
+                }
+                context.string(&text)?
+            } else {
+                buffer::from_bytes(context, chunk)?
+            };
+            let emitted = listeners::emit(context, request, "data", &[value])?;
+            if !matches!(emitted, ModuleCallResult::Return(_)) {
+                return Ok(emitted);
+            }
         }
         let emitted = listeners::emit(context, request, "end", &[])?;
         if !matches!(emitted, ModuleCallResult::Return(_)) {
@@ -983,7 +1206,7 @@ mod tests {
 
     #[test]
     fn lifecycle_transitions_and_action_order_are_explicit() {
-        let mut stream = HttpResponseStreamV1::new("connection-1", "request-1");
+        let mut stream = HttpResponseStreamV2::new("connection-1", "request-1");
         stream.set_status(201).unwrap();
         stream
             .set_header("Content-Type", "text/event-stream")
@@ -996,28 +1219,28 @@ mod tests {
         assert_eq!(stream.lifecycle(), HttpResponseLifecycle::Ended);
         assert!(matches!(
             stream.actions()[0],
-            HttpStreamActionV1::Start { sequence: 1, .. }
+            HttpStreamActionV2::Start { sequence: 1, .. }
         ));
         assert!(matches!(
             stream.actions()[1],
-            HttpStreamActionV1::Write { sequence: 2, .. }
+            HttpStreamActionV2::Write { sequence: 2, .. }
         ));
         assert!(matches!(
             stream.actions()[2],
-            HttpStreamActionV1::Write { sequence: 3, .. }
+            HttpStreamActionV2::Write { sequence: 3, .. }
         ));
         assert!(matches!(
             stream.actions()[3],
-            HttpStreamActionV1::End { sequence: 4, .. }
+            HttpStreamActionV2::End { sequence: 4, .. }
         ));
     }
 
     #[test]
     fn lifecycle_rejects_every_required_invalid_transition() {
-        let mut stream = HttpResponseStreamV1::new("connection-1", "request-1");
+        let mut stream = HttpResponseStreamV2::new("connection-1", "request-1");
         assert_eq!(
-            stream.deliver_event(HttpStreamEventV1::Drain {
-                version: 1,
+            stream.deliver_event(HttpStreamEventV2::Drain {
+                version: HTTP_STREAM_CONTRACT_VERSION,
                 connection_id: "connection-1".into(),
                 request_id: "request-1".into(),
                 sequence: 1,
@@ -1034,8 +1257,8 @@ mod tests {
             Err(HttpStreamContractError::HeadersCommitted)
         );
         assert_eq!(
-            stream.deliver_event(HttpStreamEventV1::Drain {
-                version: 1,
+            stream.deliver_event(HttpStreamEventV2::Drain {
+                version: HTTP_STREAM_CONTRACT_VERSION,
                 connection_id: "wrong".into(),
                 request_id: "request-1".into(),
                 sequence: 2,
@@ -1043,8 +1266,8 @@ mod tests {
             Err(HttpStreamContractError::UnknownConnection)
         );
         assert_eq!(
-            stream.deliver_event(HttpStreamEventV1::Drain {
-                version: 1,
+            stream.deliver_event(HttpStreamEventV2::Drain {
+                version: HTTP_STREAM_CONTRACT_VERSION,
                 connection_id: "connection-1".into(),
                 request_id: "wrong".into(),
                 sequence: 2,
@@ -1052,8 +1275,8 @@ mod tests {
             Err(HttpStreamContractError::UnknownRequest)
         );
         assert_eq!(
-            stream.deliver_event(HttpStreamEventV1::Drain {
-                version: 1,
+            stream.deliver_event(HttpStreamEventV2::Drain {
+                version: HTTP_STREAM_CONTRACT_VERSION,
                 connection_id: "connection-1".into(),
                 request_id: "request-1".into(),
                 sequence: 9,
@@ -1073,11 +1296,11 @@ mod tests {
 
     #[test]
     fn close_is_ordered_and_terminal() {
-        let mut stream = HttpResponseStreamV1::new("connection-1", "request-1");
+        let mut stream = HttpResponseStreamV2::new("connection-1", "request-1");
         stream.flush_headers().unwrap();
         stream
-            .deliver_event(HttpStreamEventV1::Close {
-                version: 1,
+            .deliver_event(HttpStreamEventV2::Close {
+                version: HTTP_STREAM_CONTRACT_VERSION,
                 connection_id: "connection-1".into(),
                 request_id: "request-1".into(),
                 reason: "client_disconnect".into(),
@@ -1093,7 +1316,7 @@ mod tests {
 
     #[test]
     fn buffered_end_emits_no_stream_actions() {
-        let mut stream = HttpResponseStreamV1::new("connection-1", "request-1");
+        let mut stream = HttpResponseStreamV2::new("connection-1", "request-1");
         stream.end(Some("ordinary response".into())).unwrap();
         assert_eq!(stream.lifecycle(), HttpResponseLifecycle::Ended);
         assert!(stream.actions().is_empty());

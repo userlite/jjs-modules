@@ -5,6 +5,7 @@ use jjs_module_api::{
     HostCapabilityDescriptor, HostModuleCatalog, ModuleProviderBuilder, ModuleSelection,
     NativeModule,
 };
+use jjs_module_node_buffer::{decode, BufferModule};
 use jjs_module_node_http::{
     decode_response, NodeHttpModule, HTTP_REQUEST_EVENT, HTTP_RESPONSE_EVENT,
 };
@@ -35,10 +36,16 @@ impl Host for TextHttpHost {
 impl ModuleHost for TextHttpHost {
     fn module_catalog(&self) -> HostModuleCatalog {
         HostModuleCatalog {
-            selections: vec![ModuleSelection {
-                identity: NodeHttpModule::default().manifest().identity.clone(),
-                imports: vec!["http".into(), "node:http".into()],
-            }],
+            selections: vec![
+                ModuleSelection {
+                    identity: NodeHttpModule::default().manifest().identity.clone(),
+                    imports: vec!["http".into(), "node:http".into()],
+                },
+                ModuleSelection {
+                    identity: BufferModule::default().manifest().identity.clone(),
+                    imports: vec!["buffer".into(), "node:buffer".into()],
+                },
+            ],
         }
     }
     fn module_capabilities(&self) -> Vec<HostCapabilityDescriptor> {
@@ -53,6 +60,9 @@ fn shipping_http_string_body_interpreter_and_native() {
         jjs::set_enabled(jit);
         let mut host = TextHttpHost::default();
         let mut provider = ModuleProviderBuilder::new();
+        provider
+            .add_implementation(Arc::new(BufferModule::default()))
+            .unwrap();
         provider
             .add_implementation(Arc::new(NodeHttpModule::default()))
             .unwrap();
@@ -89,7 +99,6 @@ http.createServer(function(req, res) {
             jjs::force_compile(&program, callback).unwrap();
         }
         let proto = state.globals.get("Object.prototype").unwrap().clone();
-        let headers = state.heap.alloc_object(proto.clone(), None).unwrap();
         let payload = state.heap.alloc_object(proto, None).unwrap();
         let text = "username=admin&password=wrongpassword + héllo 世界";
         for (name, value) in [
@@ -97,8 +106,11 @@ http.createServer(function(req, res) {
             ("requestId", Value::from("request-1")),
             ("method", Value::from("POST")),
             ("url", Value::from("/login")),
-            ("headers", Value::Object(headers)),
-            ("body", Value::from(text)),
+            ("headersJson", Value::from("[]")),
+            (
+                "bodyBase64",
+                Value::from(decode(text.as_bytes(), "base64").unwrap()),
+            ),
         ] {
             state
                 .heap
@@ -128,9 +140,14 @@ http.createServer(function(req, res) {
             .unwrap();
         let response = decode_response(encoded.as_str().unwrap()).unwrap();
         assert_eq!(response.status, 201);
-        assert_eq!(response.body, text);
+        assert_eq!(response.body_bytes.unwrap(), text.as_bytes());
         assert_eq!(
-            response.headers["content-type"],
+            response
+                .headers
+                .iter()
+                .find(|(n, _)| n == "content-type")
+                .unwrap()
+                .1,
             "text/plain; charset=utf-8"
         );
         if jit {
@@ -153,6 +170,9 @@ fn listener_setup(
     jjs::set_enabled(jit);
     let mut host = TextHttpHost::default();
     let mut provider = ModuleProviderBuilder::new();
+    provider
+        .add_implementation(Arc::new(BufferModule::default()))
+        .unwrap();
     provider
         .add_implementation(Arc::new(NodeHttpModule::default()))
         .unwrap();
@@ -187,15 +207,17 @@ fn listener_request(
         .unwrap()
         .begin_delivery(20000)
         .unwrap();
-    let headers = state.heap.alloc_object(Value::Null, None).unwrap();
     let payload = state.heap.alloc_object(Value::Null, None).unwrap();
     for (name, value) in [
         ("connectionId", Value::from("c1")),
         ("requestId", Value::from("r1")),
         ("method", Value::from("POST")),
         ("url", Value::from(path)),
-        ("headers", Value::Object(headers)),
-        ("body", Value::from(body)),
+        ("headersJson", Value::from("[]")),
+        (
+            "bodyBase64",
+            Value::from(decode(body.as_bytes(), "base64").unwrap()),
+        ),
     ] {
         state
             .heap
@@ -229,7 +251,13 @@ fn listener_response(
             response,
         )
         .unwrap();
-    decode_response(encoded.as_str().unwrap()).unwrap().body
+    String::from_utf8(
+        decode_response(encoded.as_str().unwrap())
+            .unwrap()
+            .body_bytes
+            .unwrap(),
+    )
+    .unwrap()
 }
 #[test]
 fn ordered_http_listeners_empty_input_errors_and_warm_callbacks() {
@@ -305,7 +333,11 @@ http.createServer(function(req, res) {
             .unwrap();
             assert_eq!(
                 listener_response(&runtime, &program, &mut state, &mut host, &target, response),
-                format!("a:{body}|b:{body}|once|end-a|end-b")
+                if body.is_empty() {
+                    "end-a|end-b".into()
+                } else {
+                    format!("a:{body}|b:{body}|once|end-a|end-b")
+                }
             );
         }
         assert_eq!(state.globals.get("ended"), Some(&Value::Number(16.0)));
@@ -349,7 +381,7 @@ require('http').createServer(function(req, res) {
         ] {
             let payload = state.heap.alloc_object(Value::Null, None).unwrap();
             for (name, value) in [
-                ("version", Value::Number(1.0)),
+                ("version", Value::Number(2.0)),
                 ("connectionId", Value::from("c1")),
                 ("requestId", Value::from("r1")),
                 ("sequence", Value::Number(sequence)),

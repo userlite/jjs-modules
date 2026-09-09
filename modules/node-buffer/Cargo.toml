@@ -1,0 +1,12 @@
+[package]
+name = "jjs-module-node-buffer"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+jjs-module-api.workspace = true
+base64 = "0.22.1"
+
+[dev-dependencies]
+jjs = { workspace = true, features = ["jit"] }

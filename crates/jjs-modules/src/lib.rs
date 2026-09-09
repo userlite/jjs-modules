@@ -9,6 +9,7 @@ use jjs_module_crypto::CryptoModule;
 use jjs_module_express::ExpressModule;
 use jjs_module_hazelcast::HazelcastModule;
 use jjs_module_json_schema::JsonSchemaModule;
+use jjs_module_node_buffer::BufferModule;
 use jjs_module_node_events::EventsModule;
 use jjs_module_node_fs::{NodeFsModule, NodeFsPromisesModule};
 use jjs_module_node_http::NodeHttpModule;
@@ -26,7 +27,7 @@ use jjs_module_tps_fetch::TpsFetchModule;
 use jjs_module_tps_notify::TpsNotifyModule;
 use jjs_module_tps_secrets::TpsSecretsModule;
 
-pub const TPS_DEFAULT_PROFILE_ID: &str = "tps-default-v4";
+pub const TPS_DEFAULT_PROFILE_ID: &str = "tps-default-v5";
 
 pub struct ModuleProfile {
     pub id: &'static str,
@@ -41,6 +42,7 @@ pub fn tps_default_profile() -> Result<ModuleProfile, ModuleError> {
         Arc::new(NodeFsPromisesModule::default()),
         Arc::new(NodeHttpModule::default()),
         Arc::new(EventsModule::default()),
+        Arc::new(BufferModule::default()),
         Arc::new(UrlModule::default()),
         Arc::new(QuerystringModule::default()),
         Arc::new(NodePathModule::default()),
@@ -125,15 +127,15 @@ mod tests {
     #[test]
     fn default_profile_has_stable_identity_and_complete_catalog() {
         let profile = tps_default_profile().expect("standard profile");
-        assert_eq!(profile.id, "tps-default-v4");
-        assert_eq!(profile.catalog.selections.len(), 13);
+        assert_eq!(profile.id, "tps-default-v5");
+        assert_eq!(profile.catalog.selections.len(), 14);
         let import_count: usize = profile
             .catalog
             .selections
             .iter()
             .map(|selection| selection.imports.len())
             .sum();
-        assert_eq!(import_count, 21);
+        assert_eq!(import_count, 23);
         assert!(profile.catalog.selections.iter().all(|selection| {
             selection
                 .imports

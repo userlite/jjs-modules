@@ -6,6 +6,7 @@ license.workspace = true
 description = "Standard environment-owned compiled module profile for JJS"
 
 [dependencies]
+jjs-module-node-buffer = { path = "../../modules/node-buffer" }
 jjs-module-node-url = { path = "../../modules/node-url" }
 jjs-module-node-querystring = { path = "../../modules/node-querystring" }
 jjs-module-node-events = { path = "../../modules/node-events" }

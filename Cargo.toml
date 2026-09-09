@@ -4,6 +4,7 @@ members = [
     "modules/node-http",
     "modules/node-events",
     "modules/node-url",
+    "modules/node-buffer",
     "modules/node-querystring",
     "modules/node-fs",
     "modules/node-path",
@@ -31,5 +32,5 @@ edition = "2021"
 license = "MIT"
 
 [workspace.dependencies]
-jjs = { git = "https://github.com/userlite/jjs.git", rev = "546311efd4f42ead71990ff79cd020f147df5115", default-features = false }
-jjs-module-api = { git = "https://github.com/userlite/jjs.git", rev = "546311efd4f42ead71990ff79cd020f147df5115" }
+jjs = { git = "https://github.com/userlite/jjs.git", rev = "710e9fd7d13ca03ea26df31e35d10d4eee3464f8", default-features = false }
+jjs-module-api = { git = "https://github.com/userlite/jjs.git", rev = "710e9fd7d13ca03ea26df31e35d10d4eee3464f8" }
