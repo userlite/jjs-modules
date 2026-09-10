@@ -997,7 +997,9 @@ dependencies = [
 name = "jjs-module-node-fs"
 version = "0.1.0"
 dependencies = [
+ "base64 0.22.1",
  "jjs-module-api",
+ "jjs-module-node-buffer",
 ]
 
 [[package]]

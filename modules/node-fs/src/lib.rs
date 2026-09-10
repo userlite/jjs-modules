@@ -1,4 +1,5 @@
 //! Node `fs` compatibility surface backed exclusively by the host session VFS.
+use base64::Engine as _;
 
 use jjs_module_api::{
     CompletionMode, HostCapabilityDescriptor, HostRequestSpec, ModuleCallResult, ModuleContext,
@@ -103,14 +104,15 @@ fn capabilities() -> Vec<HostCapabilityDescriptor> {
     ]
     .into_iter()
     .map(|(id, completion)| {
-        let schema = if matches!(completion, CompletionMode::Sync) {
+        let binary = matches!(id, FS_READ | FS_READ_SYNC | FS_WRITE | FS_WRITE_SYNC);
+        let schema = if binary && matches!(completion, CompletionMode::Sync) { "jjs.fs.sync-request.v2" } else if binary { "jjs.fs.request.v2" } else if matches!(completion, CompletionMode::Sync) {
             "jjs.fs.sync-request.v1"
         } else {
             "jjs.fs.request.v1"
         };
         HostCapabilityDescriptor {
             id: id.into(),
-            contract_version: 1,
+            contract_version: if binary { 2 } else { 1 },
             completion,
             schema: schema.into(),
         }
@@ -182,10 +184,10 @@ impl Default for NodeFsModule {
                     implementation: "jjs-module-node-fs-v1".into(),
                 },
                 api_version: MODULE_API_VERSION,
-                state_version: 2,
+                state_version: 3,
                 imports: vec!["fs".into(), "node:fs".into()],
                 capabilities: capabilities(),
-                dependencies: vec![],
+                dependencies: vec![jjs_module_api::ModuleDependency { id: "org.jjs.node-buffer".into(), version: "0.1.0".into(), implementation: "jjs-module-node-buffer-v1".into() }],
                 function_keys: fs_function_keys(),
                 object_kind_keys: vec![STATS_OBJECT.0],
                 deterministic_resources: vec![],
@@ -208,10 +210,10 @@ impl Default for NodeFsPromisesModule {
                     implementation: "jjs-module-node-fs-promises-v1".into(),
                 },
                 api_version: MODULE_API_VERSION,
-                state_version: 2,
+                state_version: 3,
                 imports: vec!["fs/promises".into(), "node:fs/promises".into()],
                 capabilities: capabilities(),
-                dependencies: vec![],
+                dependencies: vec![jjs_module_api::ModuleDependency { id: "org.jjs.node-buffer".into(), version: "0.1.0".into(), implementation: "jjs-module-node-buffer-v1".into() }],
                 function_keys: promises_function_keys(),
                 object_kind_keys: vec![STATS_OBJECT.0],
                 deterministic_resources: vec![],
@@ -401,8 +403,15 @@ fn utf8_encoding(
     ))
 }
 
-fn binary_unsupported(context: &mut dyn ModuleContext) -> Result<ModuleCallResult, ModuleError> {
-    unsupported_feature(context, "fs binary Buffer results")
+fn binary_read(context: &mut dyn ModuleContext, value: Option<ValueHandle>) -> Result<bool, ModuleError> {
+    let Some(mut value) = value else { return Ok(true); };
+    if context.value_kind(value)? == ModuleValueKind::Object {
+        for name in context.own_property_names(value)? { if name != "encoding" { return Err(ModuleError::ContractViolation("unsupported fs.readFile option".into())); } }
+        value = context.get_property(value, "encoding")?;
+    }
+    if matches!(context.value_kind(value)?, ModuleValueKind::Undefined | ModuleValueKind::Null) { return Ok(true); }
+    if utf8_encoding(context, Some(value))? { return Ok(false); }
+    Err(ModuleError::ContractViolation("fs.readFile supports only UTF-8 or Buffer output".into()))
 }
 
 fn request(
@@ -509,14 +518,16 @@ fn call_api(
 
     match key {
         READ_SYNC | READ_PROMISE => {
-            if !utf8_encoding(context, args.get(1).copied())? {
-                return binary_unsupported(context);
-            }
+            let binary = binary_read(context, args.get(1).copied())?;
+            let mut arguments = vec![path];
+            let mut path_state = path_state;
+            path_state.push(context.bool(binary)?);
+            if binary { arguments.push(context.string("base64")?); }
             if key == READ_SYNC {
                 return sync_request(
                     context,
                     FS_READ_SYNC,
-                    vec![path],
+                    arguments,
                     COMPLETE_READ_SYNC,
                     path_state,
                 );
@@ -529,7 +540,7 @@ fn call_api(
             request(
                 context,
                 FS_READ,
-                vec![path],
+                arguments,
                 continuation,
                 path_state,
                 promise,
@@ -539,15 +550,16 @@ fn call_api(
             let Some(callback) = callback_argument(context, args) else {
                 return Ok(thrown("fs.readFile requires a callback"));
             };
-            if !utf8_encoding(context, args.get(1).copied().filter(|v| *v != callback))? {
-                return binary_unsupported(context);
-            }
+            let binary = binary_read(context, args.get(1).copied().filter(|v| *v != callback))?;
+            let mut arguments = vec![path];
+            if binary { arguments.push(context.string("base64")?); }
+            let binary = context.bool(binary)?;
             request(
                 context,
                 FS_READ,
-                vec![path],
+                arguments,
                 COMPLETE_READ_CALLBACK,
-                vec![callback, path],
+                vec![callback, path, binary],
                 false,
             )
         }
@@ -555,9 +567,13 @@ fn call_api(
             let Some(data) = args.get(1).copied() else {
                 return Ok(thrown("fs write operation requires string data"));
             };
-            if context.value_kind(data)? != ModuleValueKind::String {
-                return binary_unsupported(context);
-            }
+            let mut arguments = vec![path];
+            if context.is_bytes(data) {
+                let bytes = context.read_bytes(data)?;
+                arguments.push(context.string(&base64::engine::general_purpose::STANDARD.encode(bytes))?);
+                arguments.push(context.string("base64")?);
+            } else if context.value_kind(data)? == ModuleValueKind::String { arguments.push(data); }
+            else { return Ok(thrown("fs write requires string or Buffer data")); }
             if key == WRITE_CALLBACK {
                 let Some(callback) = callback_argument(context, args) else {
                     return Ok(thrown("fs.writeFile requires a callback"));
@@ -570,7 +586,7 @@ fn call_api(
                 request(
                     context,
                     FS_WRITE,
-                    vec![path, data],
+                    arguments,
                     COMPLETE_WRITE_CALLBACK,
                     vec![callback, path],
                     false,
@@ -584,7 +600,7 @@ fn call_api(
                 sync_request(
                     context,
                     FS_WRITE_SYNC,
-                    vec![path, data],
+                    arguments,
                     COMPLETE_WRITE_SYNC,
                     path_state,
                 )
@@ -602,7 +618,7 @@ fn call_api(
                 request(
                     context,
                     FS_WRITE,
-                    vec![path, data],
+                    arguments,
                     continuation,
                     path_state,
                     promise,
@@ -944,6 +960,10 @@ fn resume_api(
                     | COMPLETE_UNLINK_PROMISE
             ) {
                 context.undefined()
+            } else if matches!(id, COMPLETE_READ_SYNC | COMPLETE_READ_CALLBACK | COMPLETE_READ_PROMISE) && context.as_bool(state[path_index + 1])? {
+                let encoded = context.as_string(value)?;
+                let bytes = base64::engine::general_purpose::STANDARD.decode(encoded).map_err(|_| ModuleError::ContractViolation("fs host returned invalid base64".into()))?;
+                jjs_module_node_buffer::from_bytes(context, &bytes)?
             } else if matches!(
                 id,
                 COMPLETE_STAT_SYNC | COMPLETE_STAT_CALLBACK | COMPLETE_STAT_PROMISE

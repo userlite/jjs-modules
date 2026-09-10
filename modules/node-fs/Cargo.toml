@@ -6,3 +6,6 @@ license.workspace = true
 
 [dependencies]
 jjs-module-api.workspace = true
+
+base64 = "0.22"
+jjs-module-node-buffer = { path = "../node-buffer" }
