@@ -17,3 +17,10 @@ TPS Iteration 6 tests certify exact non-UTF-8 bytes through sync/callback/promis
 calls and combined upload/download, including compatible freeze/wake. Host limits
 charge encoded transport bytes conservatively; VFS errors propagate to the normal
 sync, callback, or promise error path before application state is published.
+
+Async host operations require an async guest activation when invoked from a
+synchronous native-module callback (for example an Express handler). The focused
+callback test declares both the handler and its write-completion callback async
+because each starts another host operation. Pure/synchronous read-completion
+callbacks remain ordinary functions. General Node callback scheduling is outside
+this certified subset; an unsupported synchronous yield fails explicitly.
