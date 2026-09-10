@@ -11,3 +11,5 @@ jjs-module-api.workspace = true
 [dev-dependencies]
 jjs.workspace = true
 jjs-module-node-http = { path = "../node-http" }
+
+jjs-module-node-buffer = { path = "../node-buffer" }

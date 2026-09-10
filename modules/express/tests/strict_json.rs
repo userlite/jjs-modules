@@ -23,9 +23,17 @@ impl ModuleHost for TestHost {
             selections: vec![
                 ModuleSelection {
                     identity: ModuleIdentity {
+                        id: "org.jjs.node-buffer".into(),
+                        version: "0.1.0".into(),
+                        implementation: "jjs-module-node-buffer-v1".into(),
+                    },
+                    imports: vec!["buffer".into()],
+                },
+                ModuleSelection {
+                    identity: ModuleIdentity {
                         id: "org.jjs.node-http".into(),
                         version: "0.1.0".into(),
-                        implementation: "jjs-module-node-http-v2".into(),
+                        implementation: "jjs-module-node-http-v4".into(),
                     },
                     imports: vec!["node:http".into()],
                 },
@@ -51,9 +59,9 @@ impl ModuleHost for TestHost {
             },
             HostCapabilityDescriptor {
                 id: "jjs:http/stream".into(),
-                contract_version: 1,
+                contract_version: 2,
                 completion: CompletionMode::Sync,
-                schema: "jjs.http.stream.v1".into(),
+                schema: "jjs.http.stream.v2".into(),
             },
         ]
     }
@@ -75,9 +83,9 @@ middleware(object, {}, function () { nextCalls++; });
 if (object.body.a === 1) score++;
 
 function failure(body, contentType, expected) {
-  try { middleware(request(body, contentType), {}, function () { nextCalls++; }); }
-  catch (error) { return error.name === expected; }
-  return false;
+  let result = false;
+  middleware(request(body, contentType), {}, function (error) { result = error.name === expected && error.status === 400; });
+  return result;
 }
 let empty = request('', 'application/json');
 middleware(empty, {}, function () { nextCalls++; });
@@ -112,6 +120,9 @@ score;
         .unwrap();
     provider
         .add_implementation(Arc::new(ExpressModule::default()))
+        .unwrap();
+    provider
+        .add_implementation(Arc::new(jjs_module_node_buffer::BufferModule::default()))
         .unwrap();
     let mut host = TestHost;
     let runtime = RuntimeBuilder::new(&provider.build(), &host)

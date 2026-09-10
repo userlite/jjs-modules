@@ -350,7 +350,7 @@ impl Default for NodeHttpModule {
                     implementation: "jjs-module-node-http-v4".into(),
                 },
                 api_version: MODULE_API_VERSION,
-                state_version: 5,
+                state_version: 6,
                 imports: vec!["http".into(), "node:http".into()],
                 capabilities: vec![
                     HostCapabilityDescriptor {
@@ -387,6 +387,7 @@ impl Default for NodeHttpModule {
                     13,
                     14,
                     15,
+                    16,
                     100,
                     101,
                     102,
@@ -769,7 +770,7 @@ impl NativeModule for NodeHttpModule {
         args: &[ValueHandle],
         context: &mut dyn ModuleContext,
     ) -> Result<ModuleCallResult, ModuleError> {
-        if (11..=15).contains(&key.0) {
+        if (11..=16).contains(&key.0) {
             return input::call(context, key, callee, receiver, args);
         }
         if listeners::FUNCTION_KEYS.contains(&key.0) {

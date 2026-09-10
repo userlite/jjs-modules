@@ -1,6 +1,6 @@
 # HTTP input, output, bytes and headers contract v4
 
-Implementation `jjs-module-node-http-v4`, state version 5, module API 4;
+Implementation `jjs-module-node-http-v4`, state version 6, module API 4;
 requires the selected `org.jjs.node-buffer` v1 implementation. Shipping TPS
 profile: `tps-default-v6`. Old profiles/snapshots are rejected.
 
@@ -99,9 +99,11 @@ truncated response: body errors are delivered after queued chunks drain.
 Active exchanges use TPS's existing isolated connection snapshots: request-local
 VM changes are not merged into the service VM. Shared host storage is the way to
 persist changes across these connections. MCP buffered dispatch keeps its existing
-service-state behavior. Streaming Express JSON middleware is explicitly unsupported
-in this iteration; buffered express.json remains supported. These restrictions
-must be included when certifying application/module combinations.
+service-state behavior. Express JSON accepts both streamed and buffered input;
+see `../express/CONTRACT.md` for byte limits, UTF-8, errors, and collection semantics.
+These restrictions must be included when certifying application/module combinations.
+The internal read-only `_bodyInputState` accessor reports available, consumed,
+decoded, ended, or terminal input so middleware cannot silently parse a tail.
 
 Active exchange freeze/checkpoint returns an explicit boundary error. Envhost
 keeps durable journal intent open and defers recovery checkpoints until the final

@@ -19,6 +19,8 @@ const RESPONSE_HANDLE: u32 = 37;
 const FAILED: u32 = 38;
 const HOOK: u32 = 39;
 const TERMINAL: u32 = 40;
+const CONSUMED: u32 = 41;
+pub const BODY_STATE: ModuleFunctionKey = ModuleFunctionKey(16);
 pub const PAUSE: ModuleFunctionKey = ModuleFunctionKey(11);
 pub const RESUME: ModuleFunctionKey = ModuleFunctionKey(12);
 pub const READ: ModuleFunctionKey = ModuleFunctionKey(13);
@@ -45,7 +47,7 @@ pub fn install(
 ) -> Result<(), ModuleError> {
     set_flag(c, response, MODE, streaming)?;
     set_flag(c, r, MODE, streaming)?;
-    for k in [PAUSED, FLOWING, EOF, ENDED, TERMINAL] {
+    for k in [PAUSED, FLOWING, EOF, ENDED, TERMINAL, CONSUMED] {
         set_flag(c, r, k, false)?;
     }
     let empty = c.undefined();
@@ -60,6 +62,9 @@ pub fn install(
         let f = c.function(key)?;
         c.set_property(r, name, f)?;
     }
+    let getter = c.function(BODY_STATE)?;
+    let setter = c.function(SOCKET)?;
+    c.define_accessor(r, "_bodyInputState", getter, setter)?;
     let connection = c.object()?;
     let destroy = c.function(SOCKET)?;
     c.set_property(connection, "destroy", destroy)?;
@@ -129,6 +134,7 @@ fn take(c: &mut dyn ModuleContext, r: ValueHandle) -> Result<Option<ValueHandle>
     }
     let empty = c.undefined();
     c.set_private(r, QUEUE, empty)?;
+    set_flag(c, r, CONSUMED, true)?;
     let enc = c.get_private(r, TEXT_ENCODING)?;
     if c.value_kind(enc)? == Kind::Undefined {
         return Ok(Some(q));
@@ -180,6 +186,21 @@ pub fn call(
     r: ValueHandle,
     args: &[ValueHandle],
 ) -> Result<ModuleCallResult, ModuleError> {
+    if key == BODY_STATE {
+        let enc = c.get_private(r, TEXT_ENCODING)?;
+        let state = if flag(c, r, TERMINAL)? {
+            "terminal"
+        } else if flag(c, r, ENDED)? {
+            "ended"
+        } else if flag(c, r, CONSUMED)? {
+            "consumed"
+        } else if c.value_kind(enc)? != Kind::Undefined {
+            "decoded"
+        } else {
+            "available"
+        };
+        return Ok(ModuleCallResult::Return(c.string(state)?));
+    }
     if key == SOCKET {
         return Ok(thrown("node_http_socket_destroy_unsupported"));
     }

@@ -954,6 +954,7 @@ version = "0.1.0"
 dependencies = [
  "jjs",
  "jjs-module-api",
+ "jjs-module-node-buffer",
  "jjs-module-node-http",
 ]
 

@@ -6,6 +6,9 @@ use jjs_module_api::{
     MODULE_API_VERSION,
 };
 
+mod json;
+use json::*;
+
 const EXPRESS: ModuleFunctionKey = ModuleFunctionKey(1);
 const ROUTER: ModuleFunctionKey = ModuleFunctionKey(2);
 const CONTAINER: ModuleFunctionKey = ModuleFunctionKey(3);
@@ -51,6 +54,16 @@ const ASYNC_REQUEST: u32 = 8;
 const ASYNC_ERROR_HANDLERS: u32 = 9;
 const JSON_STRICT: u32 = 10;
 
+const JSON_EVENT: ModuleFunctionKey = ModuleFunctionKey(34);
+const NEXT_CLOSE: ModuleFunctionKey = ModuleFunctionKey(35);
+const NEXT_CLOSE_CALLBACK: u32 = 16;
+const NEXT_OWNER: u32 = 17;
+const JSON_DONE: u32 = 11;
+const JSON_STATE: u32 = 12;
+const JSON_EVENT_NAME: u32 = 13;
+const NEXT_FRAME: u32 = 14;
+const NEXT_SUSPENDED: u32 = 15;
+
 const DEFAULT_JSON_LIMIT: usize = 100 * 1024;
 
 pub struct ExpressModule {
@@ -67,7 +80,7 @@ impl Default for ExpressModule {
                     implementation: "jjs-module-express-v1".into(),
                 },
                 api_version: MODULE_API_VERSION,
-                state_version: 7,
+                state_version: 8,
                 imports: vec!["express".into()],
                 capabilities: vec![],
                 dependencies: vec![ModuleDependency {
@@ -75,7 +88,7 @@ impl Default for ExpressModule {
                     version: "0.1.0".into(),
                     implementation: "jjs-module-node-http-v4".into(),
                 }],
-                function_keys: (1..=33).collect(),
+                function_keys: (1..=35).collect(),
                 object_kind_keys: vec![],
                 deterministic_resources: vec![],
             },
@@ -795,10 +808,13 @@ fn call_handlers(
     response: ValueHandle,
     mut error: Option<ValueHandle>,
     async_error_handlers: Option<ValueHandle>,
+    resume: Option<(ValueHandle, usize)>,
+    start: usize,
 ) -> Result<HandlerFlow, ModuleCallResult> {
-    for index in 0..context
-        .array_len(handlers)
-        .map_err(|e| throw(e.to_string()))?
+    for index in start
+        ..context
+            .array_len(handlers)
+            .map_err(|e| throw(e.to_string()))?
     {
         let handler = context
             .array_get(handlers, index)
@@ -869,6 +885,41 @@ fn call_handlers(
             .get_private(next, NEXT_CALLED)
             .map_err(|e| throw(e.to_string()))?;
         if !context.as_bool(called).map_err(|e| throw(e.to_string()))? {
+            let ended = context
+                .get_property(response, "_expressEnded")
+                .map_err(|e| throw(e.to_string()))?;
+            if !context.is_truthy(ended).map_err(|e| throw(e.to_string()))? {
+                if let Some((container, layer)) = resume {
+                    let frame = context.object().map_err(|e| throw(e.to_string()))?;
+                    for (name, value) in [
+                        ("container", container),
+                        ("handlers", handlers),
+                        ("request", request),
+                        ("response", response),
+                    ] {
+                        context
+                            .set_property(frame, name, value)
+                            .map_err(|e| throw(e.to_string()))?;
+                    }
+                    for (name, value) in [("layer", layer), ("handler", index + 1)] {
+                        let value = context
+                            .number(value as f64)
+                            .map_err(|e| throw(e.to_string()))?;
+                        context
+                            .set_property(frame, name, value)
+                            .map_err(|e| throw(e.to_string()))?;
+                    }
+                    if let Some(errors) = async_error_handlers {
+                        context
+                            .set_property(frame, "errors", errors)
+                            .map_err(|e| throw(e.to_string()))?;
+                    }
+                    context
+                        .set_private(next, NEXT_FRAME, frame)
+                        .map_err(|e| throw(e.to_string()))?;
+                }
+                suspend_next(context, next, response).map_err(|e| throw(e.to_string()))?;
+            }
             return Ok(HandlerFlow::Stop);
         }
         let next_error = context
@@ -944,7 +995,14 @@ fn express_error_response(
     let encoded = context.json_stringify(payload)?;
     let encoded = context.as_string(encoded)?;
 
-    let status = context.number(500.0)?;
+    let status = property(context, "status")?;
+    let status = if context.value_kind(status)? == ModuleValueKind::Number
+        && (400.0..=599.0).contains(&context.as_number(status)?)
+    {
+        status
+    } else {
+        context.number(500.0)?
+    };
     context.set_property(response, "statusCode", status)?;
     response_type(context, response, "json")?;
     response_end(context, response, Some(&encoded))
@@ -1035,6 +1093,17 @@ fn run_container(
         return Ok(result);
     }
     decorate_response(context, response)?;
+    run_layers(context, container, request, response, 0, None)
+}
+
+fn run_layers(
+    context: &mut dyn ModuleContext,
+    container: ValueHandle,
+    request: ValueHandle,
+    response: ValueHandle,
+    start: usize,
+    mut error: Option<ValueHandle>,
+) -> Result<ModuleCallResult, ModuleError> {
     let method = property_string(context, request, "method")?;
     let path = property_string(context, request, "path")?;
     if method == "HEAD" {
@@ -1042,8 +1111,7 @@ fn run_container(
         context.set_property(response, "_expressHead", yes)?;
     }
     let layers = context.get_private(container, LAYERS)?;
-    let mut error = None;
-    for index in 0..context.array_len(layers)? {
+    for index in start..context.array_len(layers)? {
         let layer = context.array_get(layers, index)?;
         let kind = property_string(context, layer, "kind")?;
         let layer_path = property_string(context, layer, "path")?;
@@ -1096,6 +1164,8 @@ fn run_container(
                 response,
                 error,
                 Some(async_handlers),
+                Some((container, index + 1)),
+                0,
             ) {
                 Ok(HandlerFlow::Stop) => return Ok(return_undefined(context)),
                 Ok(HandlerFlow::Advance(next)) => error = next,
@@ -1151,6 +1221,8 @@ fn run_container(
             response,
             None,
             Some(async_handlers),
+            Some((container, index + 1)),
+            0,
         ) {
             Ok(HandlerFlow::Stop) => return Ok(return_undefined(context)),
             Ok(HandlerFlow::Advance(next)) => error = next,
@@ -1378,63 +1450,37 @@ impl NativeModule for ExpressModule {
                     context.call(next, receiver, &[])?;
                     return Ok(return_undefined(context));
                 }
-                let streamed = context.get_property(request, "streamedInput")?;
-                if context.is_truthy(streamed)? {
-                    return Ok(named_throw(
-                        "ExpressJsonStreamingUnsupported",
-                        "express.json streaming middleware is outside the current subset; consume request data/end explicitly",
-                    ));
-                }
-                let raw = context.get_property(request, "body")?;
-                let raw = if context.is_bytes(raw) {
-                    String::from_utf8(context.read_bytes(raw)?).map_err(|_| {
-                        ModuleError::ContractViolation("express.json requires valid UTF-8".into())
-                    })?
+                let marker = context.get_property(request, "_expressJsonState")?;
+                let done = if context.is_callable(marker) {
+                    context.get_private(marker, JSON_DONE)?
                 } else {
-                    context.as_string(raw)?
+                    context.undefined()
                 };
-                if raw.is_empty() {
-                    let empty = context.object()?;
-                    context.set_property(request, "body", empty)?;
-                    let receiver = context.undefined();
-                    context.call(next, receiver, &[])?;
+                if context.is_truthy(done)? {
+                    let undefined = context.undefined();
+                    context.call(next, undefined, &[])?;
                     return Ok(return_undefined(context));
+                }
+                if let Some(message) = json_encoding_error(context, headers, &content_type)? {
+                    return json_fail(context, next, "ExpressJsonEncodingError", &message, 415);
                 }
                 let limit_value = context.get_private(callee, JSON_LIMIT)?;
                 let limit = context.as_number(limit_value)? as usize;
-                if raw.len() > limit {
-                    return Ok(named_throw(
-                        "ExpressJsonLimitError",
-                        format!("express.json body exceeds {limit} bytes"),
-                    ));
-                }
-                let encoded = context.string(&raw)?;
-                let parsed = match context.json_parse(encoded) {
-                    Ok(parsed) => parsed,
-                    Err(_) => {
-                        return Ok(named_throw(
-                            "ExpressJsonSyntaxError",
-                            "express.json request body is malformed JSON",
-                        ));
-                    }
-                };
                 let strict = context.get_private(callee, JSON_STRICT)?;
-                if context.as_bool(strict)?
-                    && !matches!(
-                        context.value_kind(parsed)?,
-                        ModuleValueKind::Object | ModuleValueKind::Array
-                    )
-                {
-                    return Ok(named_throw(
-                        "ExpressJsonStrictError",
-                        "express.json strict mode accepts only objects or arrays",
-                    ));
+                let strict = context.as_bool(strict)?;
+                let streamed = context.get_property(request, "streamedInput")?;
+                if context.is_truthy(streamed)? {
+                    return json_collect(context, request, args[1], next, limit, strict);
                 }
-                context.set_property(request, "body", parsed)?;
-                let receiver = context.undefined();
-                context.call(next, receiver, &[])?;
-                Ok(return_undefined(context))
+                let raw = context.get_property(request, "body")?;
+                let bytes = if context.is_bytes(raw) {
+                    context.read_bytes(raw)?
+                } else {
+                    context.as_string(raw)?.into_bytes()
+                };
+                json_parse_body(context, request, next, &bytes, limit, strict)
             }
+            JSON_EVENT => json_event(context, callee, args),
             CONTAINER => run_container(context, callee, args),
             USE => {
                 if args.is_empty() {
@@ -1671,11 +1717,30 @@ impl NativeModule for ExpressModule {
                 context.call(raw, receiver, args)?;
                 Ok(ModuleCallResult::Return(receiver))
             }
+            NEXT_CLOSE => {
+                let next = context.get_private(callee, NEXT_OWNER)?;
+                if context.value_kind(next)? != ModuleValueKind::Undefined {
+                    retire_next(context, next)?;
+                }
+                Ok(return_undefined(context))
+            }
             NEXT => {
+                let called = context.get_private(callee, NEXT_CALLED)?;
+                if context.is_truthy(called)? {
+                    return Ok(return_undefined(context));
+                }
                 let yes = context.bool(true)?;
                 context.set_private(callee, NEXT_CALLED, yes)?;
                 let error = args.first().copied().unwrap_or_else(|| context.undefined());
                 context.set_private(callee, NEXT_ERROR, error)?;
+                let suspended = context.get_private(callee, NEXT_SUSPENDED)?;
+                if context.is_truthy(suspended)? {
+                    let frame = context.get_private(callee, NEXT_FRAME)?;
+                    retire_next(context, callee)?;
+                    if context.value_kind(frame)? != ModuleValueKind::Undefined {
+                        return resume_handlers(context, frame, error);
+                    }
+                }
                 Ok(return_undefined(context))
             }
             ASYNC_REJECT => {
@@ -1688,8 +1753,16 @@ impl NativeModule for ExpressModule {
                         && context.array_len(handlers)? > 0
                     {
                         let request = context.get_private(callee, ASYNC_REQUEST)?;
-                        match call_handlers(context, handlers, request, response, Some(error), None)
-                        {
+                        match call_handlers(
+                            context,
+                            handlers,
+                            request,
+                            response,
+                            Some(error),
+                            None,
+                            None,
+                            0,
+                        ) {
                             Ok(HandlerFlow::Stop) => return Ok(return_undefined(context)),
                             Ok(HandlerFlow::Advance(Some(error))) => {
                                 return express_error_response(context, response, error);
