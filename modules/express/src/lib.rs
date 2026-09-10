@@ -84,7 +84,7 @@ impl Default for ExpressModule {
                     implementation: "jjs-module-express-v1".into(),
                 },
                 api_version: MODULE_API_VERSION,
-                state_version: 9,
+                state_version: 10,
                 imports: vec!["express".into()],
                 capabilities: vec![],
                 dependencies: vec![ModuleDependency {
@@ -595,6 +595,11 @@ fn response_end(
     response: ValueHandle,
     body: Option<&str>,
 ) -> Result<ModuleCallResult, ModuleError> {
+    let body = body.map(|text| context.string(text)).transpose()?;
+    response_end_value(context, response, body)
+}
+
+fn response_end_value(context: &mut dyn ModuleContext, response: ValueHandle, body: Option<ValueHandle>) -> Result<ModuleCallResult, ModuleError> {
     let ended = context.get_property(response, "_expressEnded")?;
     if context.is_truthy(ended)? {
         return Ok(throw("Express M1 response error: already ended"));
@@ -604,8 +609,7 @@ fn response_end(
     if context.is_truthy(head)? || body.is_none() {
         context.call(raw, response, &[])?;
     } else {
-        let body = context.string(body.unwrap())?;
-        context.call(raw, response, &[body])?;
+        context.call(raw, response, &[body.unwrap()])?;
     }
     let yes = context.bool(true)?;
     context.set_property(response, "_expressEnded", yes)?;
@@ -632,9 +636,9 @@ fn response_write(
     response: ValueHandle,
     args: &[ValueHandle],
 ) -> Result<ModuleCallResult, ModuleError> {
-    if args.len() != 1 || context.value_kind(args[0])? != ModuleValueKind::String {
+    if args.len() != 1 || (!context.is_bytes(args[0]) && context.value_kind(args[0])? != ModuleValueKind::String) {
         return Ok(type_throw(
-            "Express response error: write requires a string",
+            "Express response error: write requires a string or Buffer",
         ));
     }
     let ended = context.get_property(response, "_expressEnded")?;
@@ -668,6 +672,12 @@ fn response_send(
     body: Option<ValueHandle>,
 ) -> Result<ModuleCallResult, ModuleError> {
     let body = body.unwrap_or_else(|| context.undefined());
+    if context.is_bytes(body) {
+        let headers = context.get_property(response, "_expressHeaders")?;
+        let content_type = context.get_property(headers, "content-type")?;
+        if context.value_kind(content_type)? == ModuleValueKind::Undefined { response_type(context, response, "application/octet-stream")?; }
+        return response_end_value(context, response, Some(body));
+    }
     if context.value_kind(body)? == ModuleValueKind::Object {
         let encoded = context.json_stringify(body)?;
         response_type(context, response, "json")?;
@@ -1604,11 +1614,12 @@ impl NativeModule for ExpressModule {
                 if args.len() > 1 {
                     return Ok(throw("Express M1 response error: already ended"));
                 }
-                let body = args
-                    .first()
-                    .map(|value| context.to_string(*value))
-                    .transpose()?;
-                response_end(context, receiver, body.as_deref())
+                let body = match args.first().copied() {
+                    Some(value) if context.is_bytes(value) => Some(value),
+                    Some(value) => { let text = context.to_string(value)?; Some(context.string(&text)?) },
+                    None => None,
+                };
+                response_end_value(context, receiver, body)
             }
             RESPONSE_STATUS => {
                 if args.len() != 1 || context.value_kind(args[0])? != ModuleValueKind::Number {
@@ -1712,7 +1723,7 @@ impl NativeModule for ExpressModule {
                 if args.len() != 2
                     || context.value_kind(args[0])? != ModuleValueKind::String
                     || !context.is_callable(args[1])
-                    || context.as_string(args[0])? != "drain"
+                    || !matches!(context.as_string(args[0])?.as_str(), "drain" | "close")
                 {
                     return Ok(throw("Express response error: unsupported response event"));
                 }

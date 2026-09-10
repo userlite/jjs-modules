@@ -1,6 +1,6 @@
 # Express JSON subset
 
-Express state version 9 requires fresh compatible snapshots; HTTP state version 6
+Express state version 10 requires fresh compatible snapshots; HTTP state version 6
 adds the internal raw-input eligibility accessor. Existing implementation identities
 remain unchanged; state versions participate in the module-set fingerprint.
 
@@ -72,3 +72,5 @@ module-set fingerprints reject earlier snapshots rather than migrating them.
 
 The historical isolated-VM accounting note above predates the shared-state runtime;
 current composition acceptance uses the shared service VM (see the Iteration 6 ledger).
+
+State version 10 also certifies Buffer-preserving `res.end`, `res.send`, and `res.write`, and delegates `res.on("close", callback)` to the HTTP lifecycle alongside drain.
