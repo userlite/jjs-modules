@@ -96,6 +96,7 @@ pub(super) fn json_parse_body(
     bytes: &[u8],
     limit: usize,
     strict: bool,
+    form: bool,
 ) -> Result<ModuleCallResult, ModuleError> {
     if bytes.len() > limit {
         return json_fail(
@@ -105,6 +106,9 @@ pub(super) fn json_parse_body(
             &format!("express.json body exceeds {limit} bytes"),
             413,
         );
+    }
+    if form {
+        return super::form::parse_body(c, request, next, bytes);
     }
     let raw = match std::str::from_utf8(bytes) {
         Ok(raw) => raw,
@@ -152,6 +156,10 @@ pub(super) fn json_parse_body(
             400,
         );
     }
+    parsed_body(c, request, next, parsed)
+}
+
+pub(super) fn parsed_body(c: &mut dyn ModuleContext, request: ValueHandle, next: ValueHandle, parsed: ValueHandle) -> Result<ModuleCallResult, ModuleError> {
     c.set_property(request, "body", parsed)?;
     let yes = c.bool(true)?;
     let marker = c.function(JSON_EVENT)?;
@@ -171,6 +179,7 @@ pub(super) fn json_collect(
     next: ValueHandle,
     limit: usize,
     strict: bool,
+    form: bool,
 ) -> Result<ModuleCallResult, ModuleError> {
     let status = c.get_property(request, "_bodyInputState")?;
     if c.value_kind(status)? != ModuleValueKind::String || c.as_string(status)? != "available" {
@@ -229,6 +238,8 @@ pub(super) fn json_collect(
         let value = c.number(n as f64)?;
         c.set_property(state, name, value)?;
     }
+    let form = c.bool(form)?;
+    c.set_property(state, "form", form)?;
     let strict = c.bool(strict)?;
     c.set_property(state, "strict", strict)?;
     for name in EVENTS {
@@ -355,8 +366,10 @@ pub(super) fn json_event(
             let chunk = c.array_get(chunks, i)?;
             bytes.extend_from_slice(&c.read_bytes(chunk)?);
         }
+        let form = c.get_property(state, "form")?;
+        let form = c.as_bool(form)?;
         cleanup(c, state)?;
-        return json_parse_body(c, request, next, &bytes, limit, strict);
+        return json_parse_body(c, request, next, &bytes, limit, strict, form);
     }
     let response = c.get_property(state, "response")?;
     let ended = c.get_property(response, "_expressEnded")?;

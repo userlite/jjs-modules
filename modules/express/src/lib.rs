@@ -6,6 +6,7 @@ use jjs_module_api::{
     MODULE_API_VERSION,
 };
 
+mod form;
 mod json;
 use json::*;
 
@@ -64,6 +65,9 @@ const JSON_EVENT_NAME: u32 = 13;
 const NEXT_FRAME: u32 = 14;
 const NEXT_SUSPENDED: u32 = 15;
 
+const EXPRESS_URLENCODED: ModuleFunctionKey = ModuleFunctionKey(36);
+const FORM_MIDDLEWARE: ModuleFunctionKey = ModuleFunctionKey(37);
+
 const DEFAULT_JSON_LIMIT: usize = 100 * 1024;
 
 pub struct ExpressModule {
@@ -80,7 +84,7 @@ impl Default for ExpressModule {
                     implementation: "jjs-module-express-v1".into(),
                 },
                 api_version: MODULE_API_VERSION,
-                state_version: 8,
+                state_version: 9,
                 imports: vec!["express".into()],
                 capabilities: vec![],
                 dependencies: vec![ModuleDependency {
@@ -88,7 +92,7 @@ impl Default for ExpressModule {
                     version: "0.1.0".into(),
                     implementation: "jjs-module-node-http-v4".into(),
                 }],
-                function_keys: (1..=35).collect(),
+                function_keys: (1..=37).collect(),
                 object_kind_keys: vec![],
                 deterministic_resources: vec![],
             },
@@ -1248,11 +1252,8 @@ impl NativeModule for ExpressModule {
         attach_function(context, express, "Router", ROUTER)?;
         attach_function(context, express, "json", EXPRESS_JSON)?;
         attach_function(context, express, "assets", EXPRESS_ASSETS)?;
+        attach_function(context, express, "urlencoded", EXPRESS_URLENCODED)?;
         for (name, message) in [
-            (
-                "urlencoded",
-                "Express M1 unsupported: express.urlencoded data/end surface",
-            ),
             ("static", "Express M1 unsupported: static files"),
         ] {
             let function = unsupported_function(context, message)?;
@@ -1278,6 +1279,7 @@ impl NativeModule for ExpressModule {
                     Ok(ModuleCallResult::Return(create_container(context, true)?))
                 }
             }
+            EXPRESS_URLENCODED => form::create(context, args),
             EXPRESS_JSON => {
                 if args.len() > 1 {
                     return Ok(type_throw(
@@ -1420,7 +1422,8 @@ impl NativeModule for ExpressModule {
                 context.call(send, args[1], &[body])?;
                 Ok(return_undefined(context))
             }
-            JSON_MIDDLEWARE => {
+            JSON_MIDDLEWARE | FORM_MIDDLEWARE => {
+                let form = key == FORM_MIDDLEWARE;
                 if args.len() != 3 {
                     return Ok(type_throw(
                         "express.json middleware requires req, res, and next",
@@ -1439,13 +1442,13 @@ impl NativeModule for ExpressModule {
                     ));
                 }
                 let content_type = context.get_property(headers, "content-type")?;
-                let content_type = context.as_string(content_type).unwrap_or_default();
+                let content_type = if context.value_kind(content_type)? == ModuleValueKind::Undefined { String::new() } else { context.as_string(content_type)? };
                 let media_type = content_type
                     .split(';')
                     .next()
                     .map(str::trim)
                     .unwrap_or_default();
-                if !media_type.eq_ignore_ascii_case("application/json") {
+                if !media_type.eq_ignore_ascii_case(if form { "application/x-www-form-urlencoded" } else { "application/json" }) {
                     let receiver = context.undefined();
                     context.call(next, receiver, &[])?;
                     return Ok(return_undefined(context));
@@ -1470,7 +1473,7 @@ impl NativeModule for ExpressModule {
                 let strict = context.as_bool(strict)?;
                 let streamed = context.get_property(request, "streamedInput")?;
                 if context.is_truthy(streamed)? {
-                    return json_collect(context, request, args[1], next, limit, strict);
+                    return json_collect(context, request, args[1], next, limit, strict, form);
                 }
                 let raw = context.get_property(request, "body")?;
                 let bytes = if context.is_bytes(raw) {
@@ -1478,7 +1481,7 @@ impl NativeModule for ExpressModule {
                 } else {
                     context.as_string(raw)?.into_bytes()
                 };
-                json_parse_body(context, request, next, &bytes, limit, strict)
+                json_parse_body(context, request, next, &bytes, limit, strict, form)
             }
             JSON_EVENT => json_event(context, callee, args),
             CONTAINER => run_container(context, callee, args),

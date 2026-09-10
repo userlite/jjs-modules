@@ -956,6 +956,8 @@ dependencies = [
  "jjs-module-api",
  "jjs-module-node-buffer",
  "jjs-module-node-http",
+ "jjs-module-node-querystring",
+ "percent-encoding",
 ]
 
 [[package]]

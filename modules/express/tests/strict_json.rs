@@ -113,6 +113,20 @@ if (nextCalls === 5) score++;
 if (optionsRejected) score++;
 score;
 "#;
+    let result = run(source);
+    assert!(
+        matches!(
+            result,
+            RunResult::Halt {
+                output: Value::Number(12.0),
+                ..
+            }
+        ),
+        "{result:?}"
+    );
+}
+
+fn run(source: &str) -> RunResult {
     let program = compile(&parse(&tokenize(source).unwrap()).unwrap()).unwrap();
     let mut provider = ModuleProviderBuilder::new();
     provider
@@ -129,11 +143,52 @@ score;
         .build_font_empty()
         .unwrap();
     let result = runtime.run(&program, &mut host, &[]).unwrap();
+    result
+}
+
+#[test]
+fn urlencoded_flat_options_decoding_limits_and_parser_selection() {
+    let result = run(r#"
+const express = require('express');
+const form = express.urlencoded({extended:false,limit:'1kb'});
+let count=0;
+function check(condition) { if (!condition) throw new Error('form assertion '+count); count++; }
+function parse(raw, type) {
+  const req={body:raw,headers:{'content-type':type}};
+  let calls=0;
+  form(req,{},function(err){if(err)throw new Error(err.message);calls++;});
+  form(req,{},function(err){if(err)throw new Error(err.message);calls++;});
+  check(calls===2);
+  return req.body;
+}
+const body=parse('a=1&a=2&title=hello+world&u=%E2%82%AC&empty=&flag&nested[x]=3&__proto__=no&constructor=yes','application/x-www-form-urlencoded; charset=UTF-8');
+check(body.a.length===2 && body.a[1]==='2');
+check(body.title==='hello world' && body.u==='€');
+check(body.empty==='' && body.flag==='');
+check(body['nested[x]']==='3' && body.constructor==='yes');
+check(Object.keys(body).indexOf('__proto__')===-1);
+const bad=parse('a=%ZZ&b=%E0%A4&c=%FF','application/x-www-form-urlencoded');
+check(bad.a==='%ZZ' && bad.b==='%E0%A4' && bad.c==='%FF');
+check(Object.keys(parse('','application/x-www-form-urlencoded')).length===0);
+check(parse('raw','application/octet-stream')==='raw');
+for(const opts of [{extended:true},{extended:0},{type:'text/plain'},{inflate:true},{limit:0},{limit:'bad'},{parameterLimit:2}]) {
+ let rejected=false;try{express.urlencoded(opts);}catch(e){rejected=e.name==='TypeError';}check(rejected);
+}
+for(const entry of [[express.urlencoded({limit:3}),'a=12',413], [form,'a=1',415]]) {
+ let calls=0;
+ const req={body:entry[1],headers:{'content-type': entry[2]===415?'application/x-www-form-urlencoded; charset=latin1':'application/x-www-form-urlencoded'}};
+ entry[0](req,{},function(e){check(e.status===entry[2]);calls++;});check(calls===1);
+}
+const req={body:'a=1',headers:{'content-type':'application/x-www-form-urlencoded'}};
+express.json()(req,{},function(e){check(!e);});
+form(req,{},function(e){check(!e && req.body.a==='1');});
+true;
+"#);
     assert!(
         matches!(
             result,
             RunResult::Halt {
-                output: Value::Number(12.0),
+                output: Value::Bool(true),
                 ..
             }
         ),

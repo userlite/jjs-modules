@@ -6,7 +6,9 @@ description = "Rust-native Express-compatible module for JJS"
 license = "MIT"
 
 [dependencies]
+percent-encoding = "2"
 jjs-module-api.workspace = true
+jjs-module-node-querystring = { path = "../node-querystring" }
 
 [dev-dependencies]
 jjs.workspace = true

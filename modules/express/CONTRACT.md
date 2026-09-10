@@ -1,6 +1,6 @@
 # Express JSON subset
 
-Express state version 8 requires fresh compatible snapshots; HTTP state version 6
+Express state version 9 requires fresh compatible snapshots; HTTP state version 6
 adds the internal raw-input eligibility accessor. Existing implementation identities
 remain unchanged; state versions participate in the module-set fingerprint.
 
@@ -51,3 +51,24 @@ allocation cost after GC. Aggregate shared service accounting still grows across
 retired isolated VMs; this existing runtime retirement/accounting boundary is not
 fixed here, and the plan's total retained-memory plateau criterion remains open.
 No managed deployment is included.
+
+
+## URL-encoded forms (Iteration 6)
+
+`express.urlencoded()` and `{extended:false, limit}` implement flat Express 5.1.0
+forms. The default limit is 100 KiB, with at most 1000 ampersand-separated
+parameters (overflow is 413). Unknown options and `extended:true` fail at setup.
+Bracket names remain literal; duplicate keys form arrays; empty fields are skipped;
+empty values remain strings. Plus means space. Valid percent escapes decode UTF-8;
+malformed percent/UTF-8 components remain encoded, matching Express/qs. Raw invalid
+UTF-8 uses replacement characters. `__proto__` is ignored as in Express/qs.
+Only the URL-encoded media type selects this parser; UTF-8 and identity encoding
+are supported. Other charsets/compression reach the explicit 415 error path.
+The shared JSON collector supplies limit/encoding/input errors and cleanup;
+parameter overflow is `ExpressFormParameterLimitError`. Repeated successful
+parsers share a completion marker and never consume the same body twice.
+State version 9 adds the form collector discriminator and native functions;
+module-set fingerprints reject earlier snapshots rather than migrating them.
+
+The historical isolated-VM accounting note above predates the shared-state runtime;
+current composition acceptance uses the shared service VM (see the Iteration 6 ledger).
