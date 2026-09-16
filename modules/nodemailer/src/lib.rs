@@ -48,11 +48,7 @@ fn fail(
     let message = c.string(&e.message)?;
     let receiver = c.undefined();
     let value = c.call(constructor, receiver, &[message])?;
-    for (key, text) in [
-        ("name", "EmailSendError"),
-        ("code", &e.code),
-        ("field", &e.field),
-    ] {
+    for (key, text) in [("code", &e.code), ("field", &e.field)] {
         let text = c.string(text)?;
         c.set_property(value, key, text)?;
     }
