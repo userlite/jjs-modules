@@ -1,6 +1,7 @@
 [workspace]
 members = [
     "crates/jjs-modules",
+    "crates/jjs-email-contract",
     "modules/node-http",
     "modules/node-events",
     "modules/node-url",

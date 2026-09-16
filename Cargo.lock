@@ -915,6 +915,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "jjs-email-contract"
+version = "0.1.0"
+dependencies = [
+ "base64 0.22.1",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "jjs-font-api"
 version = "0.1.0"
 source = "git+https://github.com/userlite/jjs.git?rev=890d7f6c468c3aa3fbb7e589ac8fd62e96933f54#890d7f6c468c3aa3fbb7e589ac8fd62e96933f54"
@@ -1046,6 +1055,7 @@ dependencies = [
 name = "jjs-module-nodemailer"
 version = "0.1.0"
 dependencies = [
+ "jjs-email-contract",
  "jjs-module-api",
  "serde_json",
 ]
