@@ -286,20 +286,10 @@ impl NativeModule for NodemailerModule {
             ));
         }
         match completion {
-            Ok(v) => {
-                let encoded = c.as_string(v)?;
-                let result: Value = serde_json::from_str(&encoded).map_err(|_| {
-                    ModuleError::ContractViolation("invalid email completion JSON".into())
-                })?;
-                if let Some(error) = result.get("emailError") {
-                    let message = error.as_str().ok_or_else(|| {
-                        ModuleError::ContractViolation("invalid email error envelope".into())
-                    })?;
-                    return fail(c, host_error(message.to_owned()), false);
-                }
-                Ok(ModuleCallResult::Return(c.json_parse(v)?))
-            }
-            Err(e) => fail(c, host_error(e), false),
+            Ok(v) => Ok(ModuleCallResult::Return(c.json_parse(v)?)),
+            // A yielding call owns a Promise; return a rejected Promise so the
+            // runtime adopts its original Error value without stringifying it.
+            Err(e) => fail(c, host_error(e), true),
         }
     }
     fn event(
