@@ -16,6 +16,8 @@ use jjs_module_node_http::NodeHttpModule;
 use jjs_module_node_path::NodePathModule;
 use jjs_module_node_querystring::QuerystringModule;
 use jjs_module_node_url::UrlModule;
+use jjs_module_nodemailer::NodemailerModule;
+pub use jjs_module_nodemailer::EMAIL_ENQUEUE;
 use jjs_module_rate_limit::RateLimitModule;
 use jjs_module_resvg::ResvgModule;
 use jjs_module_schedule::ScheduleModule;
@@ -27,7 +29,7 @@ use jjs_module_tps_fetch::TpsFetchModule;
 use jjs_module_tps_notify::TpsNotifyModule;
 use jjs_module_tps_secrets::TpsSecretsModule;
 
-pub const TPS_DEFAULT_PROFILE_ID: &str = "tps-default-v6";
+pub const TPS_DEFAULT_PROFILE_ID: &str = "tps-default-v7";
 
 pub struct ModuleProfile {
     pub id: &'static str,
@@ -47,6 +49,7 @@ pub fn tps_default_profile() -> Result<ModuleProfile, ModuleError> {
         Arc::new(QuerystringModule::default()),
         Arc::new(NodePathModule::default()),
         Arc::new(ExpressModule::default()),
+        Arc::new(NodemailerModule::default()),
         Arc::new(HazelcastModule::default()),
         Arc::new(JsonSchemaModule::default()),
         Arc::new(RateLimitModule::default()),
@@ -127,15 +130,15 @@ mod tests {
     #[test]
     fn default_profile_has_stable_identity_and_complete_catalog() {
         let profile = tps_default_profile().expect("standard profile");
-        assert_eq!(profile.id, "tps-default-v6");
-        assert_eq!(profile.catalog.selections.len(), 14);
+        assert_eq!(profile.id, "tps-default-v7");
+        assert_eq!(profile.catalog.selections.len(), 15);
         let import_count: usize = profile
             .catalog
             .selections
             .iter()
             .map(|selection| selection.imports.len())
             .sum();
-        assert_eq!(import_count, 23);
+        assert_eq!(import_count, 24);
         assert!(profile.catalog.selections.iter().all(|selection| {
             selection
                 .imports

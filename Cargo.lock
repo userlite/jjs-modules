@@ -1043,6 +1043,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "jjs-module-nodemailer"
+version = "0.1.0"
+dependencies = [
+ "jjs-module-api",
+ "serde_json",
+]
+
+[[package]]
 name = "jjs-module-rate-limit"
 version = "0.1.0"
 dependencies = [
@@ -1137,6 +1145,7 @@ dependencies = [
  "jjs-module-node-path",
  "jjs-module-node-querystring",
  "jjs-module-node-url",
+ "jjs-module-nodemailer",
  "jjs-module-rate-limit",
  "jjs-module-resvg",
  "jjs-module-schedule",

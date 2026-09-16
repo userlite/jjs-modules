@@ -29,3 +29,5 @@ jjs-module-tps-evidence = { path = "../../modules/tps-evidence" }
 jjs-module-tps-fetch = { path = "../../modules/tps-fetch" }
 jjs-module-tps-notify = { path = "../../modules/tps-notify" }
 jjs-module-tps-secrets = { path = "../../modules/tps-secrets" }
+
+jjs-module-nodemailer = { path = "../../modules/nodemailer" }
