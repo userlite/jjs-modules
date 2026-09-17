@@ -26,6 +26,7 @@ const RESPONSE_WRITE: ModuleFunctionKey = ModuleFunctionKey(7);
 const RESPONSE_ON: ModuleFunctionKey = ModuleFunctionKey(8);
 const RESPONSE_WRITE_HEAD: ModuleFunctionKey = ModuleFunctionKey(9);
 const REQUEST_SET_ENCODING: ModuleFunctionKey = ModuleFunctionKey(10);
+const RESPONSE_GET_HEADER: ModuleFunctionKey = ModuleFunctionKey(17);
 const COMMITTED_STATUS: u32 = 16;
 const TEXT_ENCODING: u32 = 17;
 const DATA_STARTED: u32 = 18;
@@ -309,6 +310,8 @@ impl HttpResponseStreamV2 {
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub struct HttpRequest {
+    #[serde(default)]
+    pub secure: bool,
     pub method: String,
     pub url: String,
     pub headers: Vec<(String, String)>,
@@ -350,7 +353,7 @@ impl Default for NodeHttpModule {
                     implementation: "jjs-module-node-http-v4".into(),
                 },
                 api_version: MODULE_API_VERSION,
-                state_version: 6,
+                state_version: 7,
                 imports: vec!["http".into(), "node:http".into()],
                 capabilities: vec![
                     HostCapabilityDescriptor {
@@ -382,6 +385,7 @@ impl Default for NodeHttpModule {
                     RESPONSE_ON.0,
                     RESPONSE_WRITE_HEAD.0,
                     REQUEST_SET_ENCODING.0,
+                    RESPONSE_GET_HEADER.0,
                     11,
                     12,
                     13,
@@ -894,6 +898,17 @@ impl NativeModule for NodeHttpModule {
                 context.set_private(receiver, TEXT_ENCODING, enc)?;
                 Ok(ModuleCallResult::Return(receiver))
             }
+            RESPONSE_GET_HEADER => {
+                if args.len()!=1 {return Ok(thrown("node_http_get_header_arity_invalid"));}
+                let name=context.as_string(args[0])?;
+                let headers=read_headers(context,receiver)?;
+                let values=headers.iter().filter(|(n,_)|n.eq_ignore_ascii_case(&name)).map(|(_,v)|v).collect::<Vec<_>>();
+                let value=if values.is_empty() {context.undefined()} else if name.eq_ignore_ascii_case("set-cookie") || values.len()>1 {
+                    let result=context.array()?;
+                    for v in values {let v=context.string(v)?;context.array_push(result,v)?;} result
+                } else {context.string(values[0])?};
+                Ok(ModuleCallResult::Return(value))
+            }
             RESPONSE_SET_HEADER => {
                 if args.len() != 2 {
                     return Ok(thrown("node_http_set_header_arity_invalid"));
@@ -1139,7 +1154,7 @@ impl NativeModule for NodeHttpModule {
             ));
         }
         let request = context.module_object(REQUEST)?;
-        for name in ["method", "url", "client"] {
+        for name in ["method", "url", "client", "secure"] {
             let value = context.get_property(payload, name)?;
             context.set_property(request, name, value)?;
         }
@@ -1176,6 +1191,8 @@ impl NativeModule for NodeHttpModule {
         let write_head = context.function(RESPONSE_WRITE_HEAD)?;
         let end = context.function(RESPONSE_END)?;
         context.set_property(response, "setHeader", set_header)?;
+        let get_header=context.function(RESPONSE_GET_HEADER)?;
+        context.set_property(response,"getHeader",get_header)?;
         context.set_property(response, "writeHead", write_head)?;
         context.set_property(response, "end", end)?;
         for (name, key) in [

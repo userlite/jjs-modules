@@ -31,3 +31,6 @@ jjs-module-tps-notify = { path = "../../modules/tps-notify" }
 jjs-module-tps-secrets = { path = "../../modules/tps-secrets" }
 
 jjs-module-nodemailer = { path = "../../modules/nodemailer" }
+
+jjs-module-cookie-parser = { path = "../../modules/cookie-parser" }
+jjs-module-express-session = { path = "../../modules/express-session" }

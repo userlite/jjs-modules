@@ -84,7 +84,7 @@ impl Default for ExpressModule {
                     implementation: "jjs-module-express-v1".into(),
                 },
                 api_version: MODULE_API_VERSION,
-                state_version: 10,
+                state_version: 11,
                 imports: vec!["express".into()],
                 capabilities: vec![],
                 dependencies: vec![ModuleDependency {
@@ -1259,6 +1259,7 @@ impl NativeModule for ExpressModule {
         context: &mut dyn ModuleContext,
     ) -> Result<ModuleCallResult, ModuleError> {
         let express = context.function(EXPRESS)?;
+        context.set_property(express, "default", express)?;
         attach_function(context, express, "Router", ROUTER)?;
         attach_function(context, express, "json", EXPRESS_JSON)?;
         attach_function(context, express, "assets", EXPRESS_ASSETS)?;

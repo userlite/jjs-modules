@@ -10,6 +10,8 @@ members = [
     "modules/node-fs",
     "modules/node-path",
     "modules/express",
+    "modules/cookie-parser",
+    "modules/express-session",
     "modules/nodemailer",
     "modules/hazelcast",
     "modules/rate-limit",

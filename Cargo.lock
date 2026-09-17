@@ -951,6 +951,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "jjs-module-cookie-parser"
+version = "0.1.0"
+dependencies = [
+ "jjs-module-api",
+ "serde_json",
+]
+
+[[package]]
 name = "jjs-module-crypto"
 version = "0.1.0"
 dependencies = [
@@ -967,6 +975,14 @@ dependencies = [
  "jjs-module-node-http",
  "jjs-module-node-querystring",
  "percent-encoding",
+]
+
+[[package]]
+name = "jjs-module-express-session"
+version = "0.1.0"
+dependencies = [
+ "jjs-module-api",
+ "serde_json",
 ]
 
 [[package]]
@@ -1144,8 +1160,10 @@ version = "0.1.0"
 dependencies = [
  "jjs-module-api",
  "jjs-module-better-sqlite3",
+ "jjs-module-cookie-parser",
  "jjs-module-crypto",
  "jjs-module-express",
+ "jjs-module-express-session",
  "jjs-module-hazelcast",
  "jjs-module-json-schema",
  "jjs-module-node-buffer",
