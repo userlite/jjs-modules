@@ -2,6 +2,8 @@
 
 These are working notes, not a finished specification. Update them after building modules so the rules come from real integration work.
 
+Start with the [Envhost/Microhost module handoff](envhost-module-handoff.md) for a standalone guide from module implementation through host integration, testing, and deployment.
+
 - [Error guidance](error-guidance.md) explains how failures give agents short, verified corrections without masking the error.
 
 ## Two module shapes
