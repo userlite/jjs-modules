@@ -32,7 +32,7 @@ use jjs_module_tps_fetch::TpsFetchModule;
 use jjs_module_tps_notify::TpsNotifyModule;
 use jjs_module_tps_secrets::TpsSecretsModule;
 
-pub const TPS_DEFAULT_PROFILE_ID: &str = "tps-default-v9";
+pub const TPS_DEFAULT_PROFILE_ID: &str = "tps-default-v10";
 
 pub struct ModuleProfile {
     pub id: &'static str,
@@ -135,7 +135,7 @@ mod tests {
     #[test]
     fn default_profile_has_stable_identity_and_complete_catalog() {
         let profile = tps_default_profile().expect("standard profile");
-        assert_eq!(profile.id, "tps-default-v9");
+        assert_eq!(profile.id, "tps-default-v10");
         assert_eq!(profile.catalog.selections.len(), 17);
         let import_count: usize = profile
             .catalog

@@ -48,11 +48,11 @@ impl Default for CookieParserModule {
                     implementation: "jjs-module-cookie-parser-v1".into(),
                 },
                 api_version: MODULE_API_VERSION,
-                state_version: 1,
+                state_version: 2,
                 imports: vec!["cookie-parser".into()],
                 capabilities: vec![],
                 dependencies: vec![],
-                function_keys: vec![1, 2],
+                function_keys: vec![1, 2, 3],
                 object_kind_keys: vec![],
                 deterministic_resources: vec![],
             },
@@ -66,22 +66,35 @@ impl NativeModule for CookieParserModule {
     fn instantiate(&self, c: &mut dyn ModuleContext) -> Result<ModuleCallResult, ModuleError> {
         let f = c.function(ModuleFunctionKey(1))?;
         c.set_property(f, "default", f)?;
+        for name in ["JSONCookie", "JSONCookies", "signedCookie", "signedCookies"] {
+            let helper = c.function(ModuleFunctionKey(3))?;
+            let message = c.string(&format!("cookie-parser: {name}() is not supported. Use cookieParser() for automatic unsigned and JSON cookie parsing. Signed-cookie helpers are not implemented; express-session signs its own session cookies."))?;
+            c.set_private(helper, 1, message)?;
+            c.set_property(f, name, helper)?;
+        }
         Ok(ModuleCallResult::Return(f))
     }
     fn call(
         &self,
         key: ModuleFunctionKey,
-        _: ValueHandle,
+        callee: ValueHandle,
         _: ValueHandle,
         args: &[ValueHandle],
         c: &mut dyn ModuleContext,
     ) -> Result<ModuleCallResult, ModuleError> {
+        if key.0 == 3 {
+            let message = c.get_private(callee, 1)?;
+            return Ok(ModuleCallResult::Throw {
+                name: "Error".into(),
+                message: c.as_string(message)?,
+            });
+        }
         if key.0 == 1 {
             if !args.is_empty() {
                 return Ok(ModuleCallResult::Throw {
                     name: "TypeError".into(),
                     message:
-                        "cookie-parser baseline accepts no options; signed cookies are unsupported"
+                        "cookie-parser: call cookieParser() with no arguments. Secrets, signed-cookie verification and custom decoding are not supported. express-session signs its own session cookies; configure its secret in session(options)."
                             .into(),
                 });
             }
