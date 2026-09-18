@@ -1019,6 +1019,8 @@ fn express_error_response(
     };
     context.set_property(response, "statusCode", status)?;
     response_type(context, response, "json")?;
+    // Hosting ingress consumes this marker and keeps diagnostics private.
+    response_set(context, response, "X-JJS-Default-Error", "1")?;
     response_end(context, response, Some(&encoded))
 }
 
@@ -1088,6 +1090,7 @@ fn finish_response(
         let status = context.number(404.0)?;
         context.set_property(response, "statusCode", status)?;
         response_type(context, response, "text")?;
+        response_set(context, response, "X-JJS-Default-Error", "1")?;
         return response_end(context, response, Some("Not Found"));
     }
     Ok(return_undefined(context))

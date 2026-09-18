@@ -195,3 +195,19 @@ true;
         "{result:?}"
     );
 }
+
+#[test]
+fn only_default_errors_are_marked_for_host_rendering() {
+    let result = run(r#"
+const express = require('express');
+const app = express();
+app.get('/broken', function(req,res){throw new Error('private cause');});
+app.get('/custom', function(req,res){res.status(500).json({error:'custom response'});});
+function response() { return {headers:{},setHeader:function(k,v){this.headers[k.toLowerCase()]=v;},end:function(v){this.body=v;}}; }
+const broken=response();app({method:'GET',url:'/broken',headers:{}},broken);
+const missing=response();app({method:'GET',url:'/missing',headers:{}},missing);
+const custom=response();app({method:'GET',url:'/custom',headers:{}},custom);
+broken.headers['x-jjs-default-error']==='1' && missing.headers['x-jjs-default-error']==='1' && custom.headers['x-jjs-default-error']===undefined;
+"#);
+    assert!(matches!(result, RunResult::Halt { output: Value::Bool(true), .. }), "{result:?}");
+}
