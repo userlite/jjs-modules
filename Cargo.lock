@@ -887,7 +887,7 @@ checksum = "8f42a60cbdf9a97f5d2305f08a87dc4e09308d1276d28c869c684d7777685682"
 [[package]]
 name = "jjs"
 version = "0.1.0"
-source = "git+https://github.com/userlite/jjs.git?rev=84e79f391c848574a23d2da1514ee024290a7c3a#84e79f391c848574a23d2da1514ee024290a7c3a"
+source = "git+https://github.com/userlite/jjs.git?rev=ae6722708c618a520da050fa8a082155bc4bbe8c#ae6722708c618a520da050fa8a082155bc4bbe8c"
 dependencies = [
  "bincode",
  "cranelift",
@@ -926,7 +926,7 @@ dependencies = [
 [[package]]
 name = "jjs-font-api"
 version = "0.1.0"
-source = "git+https://github.com/userlite/jjs.git?rev=84e79f391c848574a23d2da1514ee024290a7c3a#84e79f391c848574a23d2da1514ee024290a7c3a"
+source = "git+https://github.com/userlite/jjs.git?rev=ae6722708c618a520da050fa8a082155bc4bbe8c#ae6722708c618a520da050fa8a082155bc4bbe8c"
 dependencies = [
  "serde",
  "sha2",
@@ -936,7 +936,7 @@ dependencies = [
 [[package]]
 name = "jjs-module-api"
 version = "0.1.0"
-source = "git+https://github.com/userlite/jjs.git?rev=84e79f391c848574a23d2da1514ee024290a7c3a#84e79f391c848574a23d2da1514ee024290a7c3a"
+source = "git+https://github.com/userlite/jjs.git?rev=ae6722708c618a520da050fa8a082155bc4bbe8c#ae6722708c618a520da050fa8a082155bc4bbe8c"
 dependencies = [
  "jjs-font-api",
  "serde",
